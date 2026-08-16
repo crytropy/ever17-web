@@ -62,9 +62,9 @@ export const OPCODES: ReadonlyMap<string, OpcodeDef> = new Map(
     "0116": def("op_0116", "EE", "unknown", ""),
     // ------------------------------------------------------------------ 0x10 class: presentation
     "1001": def("GOTO_SCRIPT", "S", "confirmed", "jump to another .scr by name (\"debug\", \"OP00\", \"SC2F\", ...). Names resolve case-insensitively in script.dat"),
-    "1003": def("PLAY_BGM", "EE", "medium", "(track 1..19+, 100) at scene starts; bgm.dat has bgm01..28; second arg looks like volume"),
-    "1004": def("STOP_BGM", "", "low", "0-arg, appears near PLAY_BGM sites and scene ends"),
-    "1005": def("PLAY_SE", "SEE", "confirmed", "SE name from se.dat (\"SE01_04\", loop variants end in L) + (channel?, volume?)"),
+    "1003": def("PLAY_BGM", "EE", "high", "(track, volume): tracks 1..19 match bgm01..28.waf; op00.scr alternates PLAY_BGM/STOP_BGM in pairs through the whole opening"),
+    "1004": def("STOP_BGM", "", "medium", "0-arg; strictly paired with PLAY_BGM in op00.scr"),
+    "1005": def("PLAY_SE", "SEE", "confirmed", "SE name from se.dat + (channel, volume): loop SEs (L suffix) play on channel 0, one-shots on 1 (op00.scr)"),
     "1006": def("op_1006", "", "unknown", "0-arg; precedes the eyecatch/map sequence in the debug effect test"),
     "1007": def("op_1007", "", "unknown", "0-arg"),
     "1008": def("SAVE_POINT", "S", "medium", "chapter/save ids (\"S5A000\"...) in ss5a/ss6a"),

@@ -279,11 +279,19 @@ function cmdCoverage(ctx: Ctx): void {
   let covered = 0;
   const rows: { name: string; c: number; t: number; regions: number }[] = [];
   for (const entry of ctx.archive.entries) {
-    const file = parseSc3(entry.name, entry.data);
-    const d = disassemble(file, entry.data);
-    rows.push({ name: entry.name, c: d.coveredBytes, t: d.totalBytes, regions: d.dataRegions.length });
-    total += d.totalBytes;
-    covered += d.coveredBytes;
+    try {
+      const file = parseSc3(entry.name, entry.data);
+      const d = disassemble(file, entry.data);
+      rows.push({ name: entry.name, c: d.coveredBytes, t: d.totalBytes, regions: d.dataRegions.length });
+      total += d.totalBytes;
+      covered += d.coveredBytes;
+    } catch (err) {
+      console.log(`${entry.name.padEnd(18)} not SC3: ${(err as Error).message}`);
+    }
+  }
+  if (total === 0) {
+    console.log("no SC3 scripts in this archive");
+    return;
   }
   rows.sort((a, b) => a.c / Math.max(a.t, 1) - b.c / Math.max(b.t, 1));
   for (const r of rows) {
