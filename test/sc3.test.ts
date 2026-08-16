@@ -20,9 +20,11 @@ describe("expression parser (synthetic)", () => {
     expect(exprImm(parse("a0 2c 00 00").expr)).toBe(44); // s_1a choice id
   });
 
-  it("decodes 3- and 4-byte immediates", () => {
+  it("decodes 3-byte and full-u32 immediates", () => {
     expect(exprImm(parse("c0 12 27 00 00").expr)).toBe(0x1227);
-    expect(exprImm(parse("e0 00 00 28 00 00").expr)).toBe(0x28);
+    // 0xE0 class carries a full big-endian u32 in the next 4 bytes
+    expect(exprImm(parse("e0 00 00 28 00 00 00").expr)).toBe(0x2800);
+    expect(exprImm(parse("e0 29 00 5d 00 00 00").expr)).toBe(0x29005d00);
   });
 
   it("requires the pad byte after a trailing immediate", () => {

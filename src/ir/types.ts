@@ -42,10 +42,14 @@ export type IrOp =
   | {
       op: "choice";
       id: number | null;
+      /** Variable receiving the selected option index (1203 everywhere observed). */
+      resultVar: number | null;
       options: {
         index: number;
         text: string;
-        target: string;
+        /** Block label to jump to; null = no dispatch row (execution continues,
+         * the target scene reads resultVar). */
+        target: string | null;
         condition?: IrCondition;
       }[];
     }

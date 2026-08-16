@@ -17,8 +17,12 @@ export class ExprError extends Error {
  *       0x80: value = byte & 0x1F                      (1 byte,  0..31)
  *       0xA0: value = (byte & 0x1F) << 8  | b1         (2 bytes, 0..8191)
  *       0xC0: value = (byte & 0x1F) << 16 | b1..b2     (3 bytes, big-endian)
- *       0xE0: value = (byte & 0x1F) << 24 | b1..b3     (4 bytes, big-endian)
+ *       0xE0: value = u32 big-endian from b1..b4       (5 bytes; head bits unused)
  *   - byte < 0x80: operator (semantics table below, partially known).
+ *
+ * The 5-byte 0xE0 form is confirmed at three independent sites: the quake
+ * parameter writes in debug.scr/system.scr (`e0 00 00 28 00 06 00` = imm
+ * 0x2800 followed by operator 0x06) and system.scr's `01 01 <E> <E>` pairs.
  *
  * Empirical rule with zero exceptions in 104/104 scripts: when the token
  * before the 0x00 terminator is an immediate, one extra 0x00 follows the
@@ -49,9 +53,9 @@ export function parseExpr(buf: Buffer, start: number, requireImmPad = true): { e
       return { expr: { tokens, immPad }, end: p };
     }
     if (t >= 0x80) {
-      const width = 1 + [0, 1, 2, 3][(t >> 5) & 3]!;
+      const width = 1 + [0, 1, 2, 4][(t >> 5) & 3]!;
       if (p + width > buf.length) throw new ExprError("immediate token truncated", start);
-      let v = t & 0x1f;
+      let v = (t & 0xe0) === 0xe0 ? 0 : t & 0x1f;
       for (let i = 1; i < width; i++) v = v * 256 + buf[p + i]!;
       tokens.push({ kind: "imm", value: v, width });
       p += width;

@@ -167,12 +167,19 @@ export function lowerScene(
   let unknownCount = 0;
   const blocks: Record<string, IrBlock> = {};
 
+  // Global instruction stream: choice machinery can be split across blocks
+  // by entry points, so option rows are resolved against this list.
+  const globalInstrs = disasm.instructions.filter((i) => i.mnemonic !== "PAD");
+  const globalIdx = new Map<number, number>();
+  globalInstrs.forEach((ins, i) => globalIdx.set(ins.address, i));
+
   for (const [addr, block] of [...cfg.blocks.entries()].sort((a, b) => a[0] - b[0])) {
     const ops: IrOp[] = [];
     const instrs = block.instructions;
     for (let i = 0; i < instrs.length; i++) {
       const ins = instrs[i]!;
-      const lowered = lowerInstruction(ins, i, instrs, block, file, chunkOf, warnings);
+      const gi = globalIdx.get(ins.address) ?? 0;
+      const lowered = lowerInstruction(ins, gi, globalInstrs, block, file, chunkOf, warnings);
       if (lowered === "consumed") continue;
       if (lowered) {
         for (const op of lowered) {
@@ -336,34 +343,48 @@ function lowerInstruction(
       }));
     }
     case "SHOW_CHOICE": {
-      // SHOW_CHOICE <chunk>; CHOICE_BEGIN <reg> <id>; CHOICE_COND; rows...
+      // SHOW_CHOICE <chunk>; CHOICE_BEGIN <reg> <id>; [CHOICE_COND]; row*
+      // The machinery may be split across basic blocks (entry points can land
+      // between its parts), so rows are collected from the global instruction
+      // stream, not from block successors.
       const chunkIndex = operandU16(ops[0]);
       const parsed = chunkIndex !== null ? chunkOf(chunkIndex) : undefined;
       const info = parsed ? chunkChoice(parsed) : undefined;
       let id: number | null = info?.choiceId ?? null;
-      for (let j = idx + 1; j < instrs.length && j <= idx + 2; j++) {
+      let resultVar: number | null = null;
+      const rowTargets = new Map<number, number>();
+      for (let j = idx + 1; j < instrs.length; j++) {
         const nx = instrs[j]!;
         if (nx.mnemonic === "CHOICE_BEGIN") {
           id ??= operandImm(nx.operands[1]);
+          resultVar = operandImm(nx.operands[0]);
+        } else if (nx.mnemonic === "CHOICE_COND") {
+          // carries the result lvalue; nothing to extract beyond CHOICE_BEGIN
+        } else if (nx.mnemonic === "CHOICE_OPTION") {
+          const optIdx = operandImm(nx.operands[0]);
+          const tgt = nx.operands[1];
+          if (optIdx !== null && tgt?.kind === "entryRef") {
+            const addr = file.entryPoints[tgt.index - 1];
+            if (addr !== undefined) rowTargets.set(optIdx, addr);
+          }
+        } else if (nx.mnemonic !== "PAD") {
+          break;
         }
       }
-      const rowEdges = block.successors.filter((s) => s.type === "choice");
       const options = (info?.options ?? []).map((o, oi) => {
-        const edge = rowEdges.find((e) => e.type === "choice" && e.option === oi);
+        const t = rowTargets.get(oi);
         return {
           index: oi,
           text: o.text,
-          target: edge && edge.type === "choice" ? label(edge.target) : "?",
+          target: t !== undefined ? label(t) : null,
           ...(o.condition ? { condition: o.condition } : {}),
         };
       });
-      if (options.length === 0 && rowEdges.length > 0) {
-        for (const e of rowEdges) {
-          if (e.type === "choice") options.push({ index: e.option, text: "?", target: label(e.target) });
-        }
+      if (options.length === 0 && rowTargets.size > 0) {
+        for (const [oi, t] of rowTargets) options.push({ index: oi, text: "?", target: label(t) });
         warnings.push(`choice at 0x${ins.address.toString(16)}: option texts not found in chunk #${chunkIndex}`);
       }
-      return [{ op: "choice", id, options }];
+      return [{ op: "choice", id, resultVar, options }];
     }
     case "CHOICE_BEGIN":
     case "CHOICE_COND":

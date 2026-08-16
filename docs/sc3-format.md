@@ -108,7 +108,10 @@ Numeric operands are token streams terminated by `0x00`:
   * `0x80..0x9F` — 1 byte, value = `b & 0x1F` (0..31)
   * `0xA0..0xBF` — 2 bytes, value = `(b & 0x1F) << 8 | b1` (`a1 40` = 320)
   * `0xC0..0xDF` — 3 bytes (`c0 12 27` = 0x1227)
-  * `0xE0..0xFF` — 4 bytes
+  * `0xE0..0xFF` — 5 bytes: full big-endian u32 in the next four bytes (head
+    bits unused). Confirmed at three sites: quake parameter writes
+    (`e0 00 00 28 00` = 0x2800 followed by operator 0x06) and system.scr's
+    `01 01 <E> <E>` pairs.
 * byte < 0x80 — operator (one byte).
 * `0x00` — terminator.
 
@@ -193,17 +196,20 @@ table lives in `src/sc3/opcodes.ts`.
 | `00 0a` | BEW | SET_VAR | Medium | expr writes a flag; u16 arg unknown |
 | `10 41` | EEEEE | VIEWPORT_RECT | Low | (x,y,w,h,frames), rects up to 800×600 |
 | `10 40` | 4REEEEEE | CG_EFFECT | Low | resource + 6 exprs incl. rect-like values |
-| `10 46`, `10 20`, `10 21`, `10 26`, `10 2e`, `10 13`, `10 15`, `10 1d`, `10 37`, `10 06/07/09`, `10 3a/3b/3c`, `10 2b`, `10 43`, `00 28`, `00 0c/0d/0e/0f`, `00 10/11/12/13/15/19`, `01 xx`, `80 13/18`, `02`, `03` | various | — | Unknown/Low | structure pinned, semantics open; see opcodes.ts notes |
+| `10 20` | E | EFFECT_ON | High | debug.scr effect test labels each id: 4=QUA1, 5=QUA2, 12=quake (params vars 571-576, values incl. 0x2800/0xA0000 - fixed-point?), 18=sakura petals, 26=rain (intensity var 569), 27=sunbeams (variant var 568), 32=filter2, 41=snow, 44=filter, 45=blink, 46=flash, 47/48/49=map eyecatch/position/route |
+| `10 21` | E | EFFECT_OFF | Medium | stops by category: filter+filter2 → 13, sunbeams → 7, rain → 6, snow → 14; mapping incomplete |
+| `00 0d` | E W | SHAKE | Medium | paired with QUA1_CH / CHR_QUA labels; (mode, amplitude/duration 194..346) |
+| `10 41` | E×5 | VIEWPORT_RECT | Medium | zooms to (x,y,w,h) over N frames (effect test: (332,185,200,150) in 90) |
+| `10 46`, `10 26`, `10 2e`, `10 13`, `10 15`, `10 1d`, `10 37`, `10 06/07/09`, `10 3a/3b/3c`, `10 2b`, `10 43`, `00 28`, `00 0c/0e/0f`, `00 10/11/12/13/15/19`, `01 xx`, `80 13/18`, `02`, `03` | various | — | Unknown/Low | structure pinned, semantics open; see opcodes.ts notes |
 
 ### 4.2 Known open decoding issues
 
-* `system.scr` has ~26% undecoded bytes; `startup.scr` ~10%; `debug.scr` one
-  region. Causes: inline data (u32 jump tables in debug.scr, `"T_1A\0T_2A\0…"`
-  scene-name string table in startup.scr — both detected and reported as data
-  regions), the `01 01` opcode (13×, operand layout unresolved: `e0`-class
-  immediate followed by bytes that violate the pad rule), and an `e0 00 00 xx
-  00 06 00` immediate form in some `fe 2d` (16×) that likewise breaks the pad
-  rule. All are explicitly surfaced as `.data` regions, never skipped silently.
+* `system.scr` has ~20% undecoded bytes and `startup.scr` ~10% (debug.scr
+  and every story script decode fully). Causes: inline data (u32 jump tables,
+  the `"T_1A\0T_2A\0…"` scene-name string table in startup.scr — detected and
+  reported as string-table data regions) and a handful of `00/01/80`-class
+  opcodes whose operand layouts are still unproven. All gaps are surfaced as
+  `.data` regions, never skipped silently.
 
 ## 5. Text chunk format — Confirmed structure
 
@@ -235,11 +241,14 @@ parser exposes raw lines and the IR layer splits speaker/body on that pattern.
 * `fe 28/2d/2e <lhs> <rhs>`: conditionally executes **exactly the next
   instruction** (typically `00 07`, `10 01`, or `00 05`). Chains of guards
   appear at scene heads testing route flags.
-* Choices: `ff <chunk>` displays options; `10 1a <reg> <id>` arms the choice;
-  `00 26` supplies the register lvalue; `27`/`00 27` rows map option index →
-  entry target; execution falls through (idle/redisplay loop) until the player
-  picks, then control transfers to the row's target. Branches typically
-  rejoin via `00 07` to a shared merge entry.
+* Choices: `ff <chunk>` displays options; `10 1a <reg> <id>` blocks until the
+  player picks and stores the selected option index in the register (always
+  var 1203); `00 26` supplies the register lvalue; optional `27`/`00 27` rows
+  then dispatch option index → entry target, branches typically rejoining via
+  `00 07` at a shared merge entry. Rowless choices exist (debug.scr:
+  `SHOW_CHOICE; CHOICE_BEGIN; GOTO_SCRIPT "YC3A"`): the target scene reads
+  var 1203 itself (yc3a.scr / tc2b.scr test it at their heads) - so 1203 is a
+  cross-script selection register.
 * `00 08` computed jump over an entry-index table.
 
 ## 7. Confirmed worked examples
@@ -262,7 +271,8 @@ parser exposes raw lines and the IR layer splits speaker/body on that pattern.
 4. Semantics of `10 20`/`10 21`/`10 46` (very frequent, ids ≤ 48 — ambient
    loops? window modes?), `00 28`, and most `01 xx`/`80 xx` system ops.
 5. Entry points into instruction tails (§2.1 quirk).
-6. `01 01` and the `e0 … 06 00` immediate anomaly in system.scr.
+6. The `10 21` category-id mapping; `10 1a` timeout behaviour (arg 1000 in
+   every debug menu vs real ids in story choices).
 7. Voice-tag ↔ per-character mapping (`voice.dat` also holds `c1s*`-style
    names not seen in tags yet).
 
