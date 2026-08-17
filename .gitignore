@@ -1,2 +1,12 @@
+# Never commit the user's game installation (copyrighted assets)
+ever17games/
+ever17-web/
+
 node_modules/
 dist/
+dumps/
+output/
+assets/
+*.tsbuildinfo
+.DS_Store
+build/

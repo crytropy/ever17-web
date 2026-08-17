@@ -1,0 +1,15 @@
+{
+  "name": "e17-assets",
+  "version": "0.1.0",
+  "description": "Ever17 (KID engine) CPS image and WAF audio decoders",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts",
+    "./cps": "./src/cps/index.ts",
+    "./waf": "./src/waf/index.ts"
+  },
+  "bin": { "e17-assets": "./src/cli.ts" },
+  "scripts": { "typecheck": "tsc --noEmit" },
+  "dependencies": { "e17-parser": "*" }
+}

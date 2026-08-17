@@ -1,5 +1,5 @@
 {
-  description = "e17-parser: Ever17 SC3 scenario reverse-engineering toolkit";
+  description = "Ever17 preservation toolkit: SC3 scenario parser, asset decoders, VN runtime";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";

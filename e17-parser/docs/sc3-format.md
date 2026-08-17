@@ -131,8 +131,10 @@ Recurring shapes rather than proven meanings:
 
 | shape | where | reading (tentative) |
 |---|---|---|
-| `0a <var> 14 14` | lhs of `fe 28` | load variable, compare with rhs operand |
-| `0a <var> 14 17/18/20/1b` | lhs of `fe 2d` | other comparison relations |
+| `0a <var> 14 <rel>` | lhs of `fe 28`/`fe 2d`/`fe 2e` | load variable, then compare against the rhs operand with relation `<rel>` |
+| `<rel>` = `0x14` | everywhere | **equality** (High — see §6.1) |
+| `<rel>` = `0x17` | s_1a 0x29D, `fe 2d` | **inequality** (Medium — see §6.1) |
+| `<rel>` = `0x18` / `0x1b` / `0x20` | `fe 2d`, `fe 2e` | other relations, unidentified |
 | `28 0a <var> 14` | `00 26` (choice), `00 0a` (assign) | variable reference as *lvalue* |
 | `28 0a <var> 14 0c/0d 01 <imm> 01` | `00 0a` | read-modify-write of a variable |
 | `2d 0a <var> 14` | `10 2e` arg2 | computed value from a variable |
@@ -169,8 +171,8 @@ table lives in `src/sc3/opcodes.ts`.
 | `10 1a` | E E | CHOICE_BEGIN | Confirmed | (result var — always 1203, choice id). s_1a story choice id = 44; debug menus use dummy id 1000 |
 | `00 26` | E | CHOICE_COND | High | expr `28 0a 1203 14` (selection register as lvalue) between CHOICE_BEGIN and rows |
 | `00 1a` | — | CHOICE_END | Medium | closes choice regions |
-| `fe 28` | E E | IF_EQ | High | guards exactly the next instruction (debug menu3: `fe 28 <flag test> <10 01 OP00>`); rhs is a comparison value — the same value `0x1227` recurs across 8+ files, tiny values 0/1/5 common. Polarity unproven |
-| `fe 2d`, `fe 2e` | E E | IF_* | Medium | comparison variants (different relation ops in lhs) |
+| `fe 28` | E E | IF_EQ | High | guards exactly the next instruction; **executes it when the comparison holds** (§6.1). lhs is `load <var> 0x14 <rel>`, rhs a value |
+| `fe 2d`, `fe 2e` | E E | IF_* | Medium | same shape, other relation bytes (0x18/0x1B/0x20) whose meanings are still unidentified |
 | `00 08` | E L | SWITCH | High | selector expr + u16 entry-index table; table length implicit (startup/system only) |
 | `10 01` | S | GOTO_SCRIPT | Confirmed | `"debug"`, `"OP00"`, `"SC2F"`… case-insensitive |
 | `10 19` | T | MESSAGE | Confirmed | 5 bytes; sequential chunk refs throughout every script |
@@ -251,6 +253,35 @@ parser exposes raw lines and the IR layer splits speaker/body on that pattern.
   cross-script selection register.
 * `00 08` computed jump over an entry-index table.
 
+### 6.1 Conditional polarity and relations — resolved in phase 2
+
+A guard executes the instruction that follows it **when its comparison holds**,
+and skips exactly that one instruction otherwise.
+
+**Evidence that `0x14` is equality and the polarity is "execute on true"**
+(Confidence: High): `sc1a.scr` dispatches on the choice register at two
+different sites — `var1203 == 1` at 0x9A and `var1203 == 2` at 0x90F — each
+guarding `GOTO_SCRIPT "S_1A2"`. Two *different* constants selecting the same
+destination is a value dispatch, which is only coherent if the guarded
+instruction runs when the values match. Every story script ends the same way:
+a guard on `var1203` followed by the cross-scene jump (`s_1a` → S_1A2,
+`s_1a2` → S_1B / SC1A, `s_1b` → S_1C / SC1B, `t_1a` → T_1B, …), keyed on the
+option the player picked in the preceding choice. Under the opposite polarity
+those chains route on whichever option was *not* chosen.
+
+**Evidence that `0x17` is inequality** (Confidence: Medium): `s_1a` 0x29D — the
+target of option 0 ("谢谢") of choice 44 — guards the matching reply
+(`MESSAGE text#21`, 「谢谢……」 + taking the medicine) with
+`var1206 <0x17> 1`. That line has to play on the branch the player just chose,
+so the relation must hold at var1206's initial value, which equality cannot do
+and inequality does. Verified in the runtime: with `0x17` = inequality both
+branches of choice 44 play their own reply and then merge (§7).
+
+Variables default to 0 until written. Guards whose relation byte is not one of
+the two identified above are reported as *unevaluable* rather than guessed;
+`vn-runtime` surfaces them through its `onBranch` hook and takes the skip path
+by default.
+
 ## 7. Confirmed worked examples
 
 * **debug_bg8**: 240 × (`SET_BG bg…`, `SET_SPRITE YU02BDM`, `MESSAGE`) then
@@ -260,12 +291,18 @@ parser exposes raw lines and the IR layer splits speaker/body on that pattern.
   line (voice S1A0xx 「谢谢……」).
 * **debug.scr**: 3-level test menu tree (10 options per page) fully mapped via
   `27`-row targets; menu idle loops via `00 07` self/redisplay jumps.
+* **s_1a played end to end** (phase 2, `vn-runtime`): 622 dialogue lines with
+  voice ids and speaker attribution, 2 choices (ids 44 and 46), 218 distinct
+  assets resolved, exiting to `S_1A2`. Both branches of choice 44 diverge at
+  block 0x23E, play their own reply, reconverge at 0x2E0 and then execute an
+  identical block trace to the scene exit at 0x139A.
 
 ## 8. Open questions
 
 1. Meaning of the always-zero 4-byte block before resource indexes.
-2. `fe 28` polarity (execute-on-true vs execute-on-false) and the exact
-   relation encoded by `14 14` vs `14 17` etc.
+2. ~~`fe 28` polarity~~ — resolved in phase 2 (§6.1). Still open: the
+   relations behind `0x18`, `0x1b` and `0x20`, and what `var 1206` (and the
+   recurring rhs `0x1227`) actually track.
 3. The immediate-pad rule's real grammar (probably an artifact of the VM's
    expression evaluator; harmless for parsing).
 4. Semantics of `10 20`/`10 21`/`10 46` (very frequent, ids ≤ 48 — ambient

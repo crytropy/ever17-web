@@ -1,0 +1,11 @@
+{
+  "name": "vn-runtime",
+  "version": "0.1.0",
+  "description": "Minimal data-driven visual-novel runtime over the Ever17 IR",
+  "type": "module",
+  "license": "MIT",
+  "exports": { ".": "./src/index.ts" },
+  "bin": { "vn": "./src/cli.ts" },
+  "scripts": { "typecheck": "tsc --noEmit" },
+  "dependencies": { "e17-parser": "*", "e17-assets": "*" }
+}
