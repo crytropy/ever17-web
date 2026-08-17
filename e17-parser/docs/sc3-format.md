@@ -135,14 +135,15 @@ Recurring shapes rather than proven meanings:
 | `<rel>` = `0x14` | everywhere | **equality** (High — see §6.1) |
 | `<rel>` = `0x17` | s_1a 0x29D, `fe 2d` | **inequality** (Medium — see §6.1) |
 | `<rel>` = `0x18` / `0x1b` / `0x20` | `fe 2d`, `fe 2e` | other relations, unidentified |
-| `28 0a <var> 14` | `00 26` (choice), `00 0a` (assign) | variable reference as *lvalue* |
-| `28 0a <var> 14 0c/0d 01 <imm> 01` | `00 0a` | read-modify-write of a variable |
+| `28 0a <var> 14` | `00 26`, `0b 02` text options | variable reference as *lvalue*/selector |
+| `28 0a <var> 14 <rel> 01 <imm> 01` | `00 0a` | comparison for a conditional jump (§6.1) |
 | `2d 0a <var> 14` | `10 2e` arg2 | computed value from a variable |
 
 Variable ids observed: 171 (`0xAB`, guards every `00 05` wait — likely a global
 "wait/skip enabled" setting), 1203 (`0x4B3`, the choice-selection register used
 by `10 1a`/`00 26` everywhere), 1200–1202/1274 (route/progress flags tested at
-scene heads), 1050/1210/1245… (story flags written by `00 0a`).
+scene heads), 1050/1265… (scene-insert flags), 1206-1215 (affection counters),
+1223 (ending id read by y_ed), 1232-1234 (investigation-menu visibility).
 
 ## 4. Instruction encoding
 
@@ -169,10 +170,10 @@ table lives in `src/sc3/opcodes.ts`.
 | `27` / `00 27` | E J | CHOICE_OPTION | Confirmed | debug.scr 10-option menus target entries #7/#0x14/#0x37… = submenu display code; s_1a options → 0x29D/0x2B1 |
 | `ff` | W | SHOW_CHOICE | Confirmed | operand = chunk with `0b`-structured options (§5); always followed by `10 1a` |
 | `10 1a` | E E | CHOICE_BEGIN | Confirmed | (result var — always 1203, choice id). s_1a story choice id = 44; debug menus use dummy id 1000 |
-| `00 26` | E | CHOICE_COND | High | expr `28 0a 1203 14` (selection register as lvalue) between CHOICE_BEGIN and rows |
+| `00 26` | E | CHOICE_COND | High | dispatch-register selector for the following `27` rows; in choices always var 1203, in bare tables any var (y_ed: 1223) |
 | `00 1a` | — | CHOICE_END | Medium | closes choice regions |
-| `fe 28` | E E | IF_EQ | High | guards exactly the next instruction; **executes it when the comparison holds** (§6.1). lhs is `load <var> 0x14 <rel>`, rhs a value |
-| `fe 2d`, `fe 2e` | E E | IF_* | Medium | same shape, other relation bytes (0x18/0x1B/0x20) whose meanings are still unidentified |
+| `fe 28` | E E | VAR_SET | High | variable write (assign / `+=`), **not a conditional** — see §6.1 |
+| `fe 2d`, `fe 2e` | E E | VAR_SET_* | Low | write-family variants (startup/system only) |
 | `00 08` | E L | SWITCH | High | selector expr + u16 entry-index table; table length implicit (startup/system only) |
 | `10 01` | S | GOTO_SCRIPT | Confirmed | `"debug"`, `"OP00"`, `"SC2F"`… case-insensitive |
 | `10 19` | T | MESSAGE | Confirmed | 5 bytes; sequential chunk refs throughout every script |
@@ -195,7 +196,7 @@ table lives in `src/sc3/opcodes.ts`.
 | `10 45` | EE | TRANSITION_TIME | Medium | (frames 0/3/6/12/18/24, mode 0|1) |
 | `10 24` | E | SCENE_MARKER | High | §2.2 |
 | `10 08` | S | SAVE_POINT | Medium | `"S5A000"`… chapter ids |
-| `00 0a` | BEW | SET_VAR | Medium | expr writes a flag; u16 arg unknown |
+| `00 0a` | B E J | VAR_JUMP | High | conditional jump to an entry target on a variable comparison — the scenario's only in-scene conditional (§6.1) |
 | `10 41` | EEEEE | VIEWPORT_RECT | Low | (x,y,w,h,frames), rects up to 800×600 |
 | `10 40` | 4REEEEEE | CG_EFFECT | Low | resource + 6 exprs incl. rect-like values |
 | `10 20` | E | EFFECT_ON | High | debug.scr effect test labels each id: 4=QUA1, 5=QUA2, 12=quake (params vars 571-576, values incl. 0x2800/0xA0000 - fixed-point?), 18=sakura petals, 26=rain (intensity var 569), 27=sunbeams (variant var 568), 32=filter2, 41=snow, 44=filter, 45=blink, 46=flash, 47/48/49=map eyecatch/position/route |
@@ -229,6 +230,7 @@ Token stream, `0x00`-terminated. Bytes ≥ 0x20 are text (bytes ≥ 0x80 start a
 | `0x03` | — | page end / clear | High |
 | `0x0B 0x00` | u16 | choice header: **choice id** (44 = s_1a's 谢谢/不需要) | Confirmed |
 | `0x0B 0x01` | text…`0x01` | choice option text | Confirmed |
+| `0x0B 0x02` | expr, text…`0x01` | option shown iff the referenced variable is nonzero (expr = `28 0a <var> 14`); t_1c/t_6b investigation menus init vars 1232-1234 to 1 and zero them on visit | High |
 | `0x0A` | expr | option visibility condition (empty = always) | High |
 | `0x04` | expr | inline wait (30/60) | Medium |
 | `0x10/0x11/0x14` | u8 | unknown 2-byte controls | Unknown |
@@ -253,56 +255,88 @@ parser exposes raw lines and the IR layer splits speaker/body on that pattern.
   cross-script selection register.
 * `00 08` computed jump over an entry-index table.
 
-### 6.1 Conditional polarity and relations — resolved in phase 2
+### 6.1 Variable writes and conditional jumps — corrected in phase 3
 
-A guard executes the instruction that follows it **when its comparison holds**,
-and skips exactly that one instruction otherwise.
+**Phase 2's reading of `fe 28` as a conditional was wrong**, and its §6.1
+"polarity" argument was built on that mistake. Full-route execution in phase 3
+forced the correction; the two sites phase 2 cited are re-explained below.
 
-**Evidence that `0x14` is equality and the polarity is "execute on true"**
-(Confidence: High): `sc1a.scr` dispatches on the choice register at two
-different sites — `var1203 == 1` at 0x9A and `var1203 == 2` at 0x90F — each
-guarding `GOTO_SCRIPT "S_1A2"`. Two *different* constants selecting the same
-destination is a value dispatch, which is only coherent if the guarded
-instruction runs when the values match. Every story script ends the same way:
-a guard on `var1203` followed by the cross-scene jump (`s_1a` → S_1A2,
-`s_1a2` → S_1B / SC1A, `s_1b` → S_1C / SC1B, `t_1a` → T_1B, …), keyed on the
-option the player picked in the preceding choice. Under the opposite polarity
-those chains route on whichever option was *not* chosen.
+**`fe 28 <lhs> <value>` is a variable write, never a branch.** The lhs shape
+`0a <var> 0x14 <mod>` selects the variable and the modification:
 
-**Evidence that `0x17` is inequality** (Confidence: Medium): `s_1a` 0x29D — the
-target of option 0 ("谢谢") of choice 44 — guards the matching reply
-(`MESSAGE text#21`, 「谢谢……」 + taking the medicine) with
-`var1206 <0x17> 1`. That line has to play on the branch the player just chose,
-so the relation must hold at var1206's initial value, which equality cannot do
-and inequality does. Verified in the runtime: with `0x17` = inequality both
-branches of choice 44 play their own reply and then merge (§7).
+* mod `0x14` — assign (`var := value`). Evidence: every scene head initialises
+  date variables to its own calendar day (`1200:=5`, `1201/1202:=1` in
+  s_1a/t_1a, `:=2` in s_2a/t_2a, `:=3` in s_3a, `:=4` in sy4a — May 1..4,
+  matching the scene names); sc1a's choice branches write the resume index
+  (`1203:=1` / `1203:=2`) immediately before `GOTO S_1A2`, which s_1a2's head
+  dispatch consumes; the debug menu's 全選択肢ON/OFF options write `1053:=1/0`;
+  the quake test writes its six parameters (vars 571-576) before EFFECT_ON(12).
+* mod `0x17` — modify, observed only on vars 1206-1215 (the affection block),
+  e.g. `1206 <0x17> 1` on s_1a's 谢谢 branch. Read as `+=` (Medium): choice
+  rewards accumulate and are later compared against thresholds like
+  `1207 >= 17`.
+* `fe 2d`/`fe 2e` (mods 0x18/0x1b/0x20) never occur in story scripts; their
+  modifications are unidentified (Low).
 
-Variables default to 0 until written. Guards whose relation byte is not one of
-the two identified above are reported as *unevaluable* rather than guessed;
-`vn-runtime` surfaces them through its `onBranch` hook and takes the skip path
-by default.
+**`00 0a` (VAR_JUMP) is the conditional jump**: `<u8> <expr> <entry#>` where
+the expression is `28 0a <var> 0x14 <rel> 01 <value> 01`, jumping when the
+comparison holds:
+
+| rel | meaning | confidence | evidence |
+|---|---|---|---|
+| `0x0c` | `==` | High | s_1a2 head: `if 1203==1 -> entry#6`, `==2 -> entry#9` (resume points after the SC1A insert); fresh entries (1203=0) fall through both |
+| `0x0d` | `!=` | High | t_1c's investigation gate loops back to the menu while `1232 != 0` or `1233 != 0` (unvisited locations) |
+| `0x10` | `>=` | Low-Med | route gates: t_6b `1207 >= 17` / `1208 >= 14`, sy6b `1206 >= 7`, y_ed `1209 >= 3` |
+| `0x11` | `>` | Low-Med | t_6b's ask-menu counts asks in 1211 and exits on `1211 > 1` (ask two of three); under `<` the gate is dead code and the menu cannot terminate |
+| `0x0f` | `<=`? | Low | 2 sites; orientation unverified |
+
+The alternative shape `2d 0a <var> 0x14` (no comparison value) tests a
+*system-space* variable for nonzero — var 7 dominates (y_ed skips ~20
+paragraphs on it), consistent with an "already seen" flag that is 0 on a fresh
+game (Low).
+
+**Bare dispatch tables.** `00 26 <lvalue var>` followed by `27` rows *without*
+a `SHOW_CHOICE`/`10 1a` is a jump table on that variable: each row is
+"if var == k, jump target". y_ed's head dispatches the **ending id in var
+1223** this way (rows 0-6 = the seven ending variants; tt7a writes `1223 := 0`
+before `GOTO Y_ED`). The choice machinery is the same dispatcher fed by
+`10 1a`'s stored selection (0-based option index) in var 1203.
+
+Variables persist across `GOTO_SCRIPT` (one global table); scene transitions
+conventionally write `1203 := 0` ("fresh entry") before jumping, and callers
+of shared scenes leave a nonzero resume index instead.
 
 ## 7. Confirmed worked examples
 
 * **debug_bg8**: 240 × (`SET_BG bg…`, `SET_SPRITE YU02BDM`, `MESSAGE`) then
   `GOTO_SCRIPT "debug"`; text chunks name each CG being shown. 100% decode.
 * **s_1a choice 44** (`SHOW_CHOICE 20`): options 谢谢→0x29D / 不需要→0x2B1,
-  both `JUMP entry#3`→0x2E0 merge; 0x29D contains an `IF_EQ`-guarded extra
-  line (voice S1A0xx 「谢谢……」).
+  both `JUMP entry#3`→0x2E0 merge; 0x29D rewards an affection point
+  (`1206 += 1`) before its reply line.
 * **debug.scr**: 3-level test menu tree (10 options per page) fully mapped via
   `27`-row targets; menu idle loops via `00 07` self/redisplay jumps.
 * **s_1a played end to end** (phase 2, `vn-runtime`): 622 dialogue lines with
   voice ids and speaker attribution, 2 choices (ids 44 and 46), 218 distinct
   assets resolved, exiting to `S_1A2`. Both branches of choice 44 diverge at
-  block 0x23E, play their own reply, reconverge at 0x2E0 and then execute an
-  identical block trace to the scene exit at 0x139A.
+  block 0x23E, play their own reply, reconverge at 0x2E0 and run identically to
+  the scene exit.
+* **Full routes from New Game to an ending** (phase 3): with one shared
+  variable table, `op00` chains through the Takeshi common days into the
+  Tsugumi route and its ending
+  (`op00 → t_1a…t_6b → tt6a → tt7a → y_ed`, 12,309 lines, END_TU00 card,
+  infinity-loop coda); alternative choice policies produce the You bad end
+  (`… s_3e → sy4a…sy6b → sybd → y_ed`) and the Sara good end with its
+  epilogue sandwich (`… ss4a…ss7a → y_ed → ssep → y_ed`). Investigation menus
+  (t_1c, t_6b) terminate through their own gates with no scene-specific
+  handling.
 
 ## 8. Open questions
 
 1. Meaning of the always-zero 4-byte block before resource indexes.
-2. ~~`fe 28` polarity~~ — resolved in phase 2 (§6.1). Still open: the
-   relations behind `0x18`, `0x1b` and `0x20`, and what `var 1206` (and the
-   recurring rhs `0x1227`) actually track.
+2. ~~`fe 28` semantics~~ — resolved in phase 3 (§6.1): a variable write.
+   Still open: the write modifications `0x18`/`0x1b`/`0x20` (system scripts),
+   the exact orientation of relation `0x0f`, and what the recurring
+   `171 := 0x1027/0x1227/0x1727` writes before every WAIT configure.
 3. The immediate-pad rule's real grammar (probably an artifact of the VM's
    expression evaluator; harmless for parsing).
 4. Semantics of `10 20`/`10 21`/`10 46` (very frequent, ids ≤ 48 — ambient
@@ -310,8 +344,18 @@ by default.
 5. Entry points into instruction tails (§2.1 quirk).
 6. The `10 21` category-id mapping; `10 1a` timeout behaviour (arg 1000 in
    every debug menu vs real ids in story choices).
+7. The `0x0a <expr>`-prefixed text-side option conditions (distinct from the
+   `0b 02` visibility refs, which are resolved).
 7. Voice-tag ↔ per-character mapping (`voice.dat` also holds `c1s*`-style
    names not seen in tags yet).
+
+## 9. Movie container (`movie/*.e17`) — Confirmed
+
+MPEG-1 program streams with the first byte overwritten (`00` → `FF`).
+Restoring that single byte yields a valid file (ffprobe: mpeg1video 640×480
+with MPEG audio). `PLAY_MOVIE` operands map to these files case-insensitively
+(`"END_TU00"` → `end_tu00.e17`); `ever17` is the OP, `sdr640` the staff roll,
+`END_*00` the per-heroine ending cards.
 
 Next avenues, in order: differential play-testing against the real engine;
 only then the EXE.

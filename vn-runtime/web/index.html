@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Ever17 vn-runtime</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html, body { margin:0; height:100%; background:#000; color:#fff;
+               font-family:"Songti SC","SimSun","Noto Serif CJK SC",serif; }
+  #wrap { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
+  #stage { position:relative; width:800px; height:600px; overflow:hidden; background:#000;
+           transform-origin:center; }
+  #bg, #fill, .sprite, #movie { position:absolute; }
+  #bg { left:0; bottom:0; }
+  #fill { inset:0; }
+  .sprite { bottom:0; }
+  #movie { inset:0; width:100%; height:100%; background:#000; object-fit:contain; }
+  #textbox {
+    position:absolute; left:20px; right:20px; bottom:16px; min-height:110px;
+    background:rgba(0,0,20,.72); border:1px solid rgba(160,190,255,.5); border-radius:6px;
+    padding:10px 16px; box-sizing:border-box; cursor:pointer;
+  }
+  #speaker { color:#9fc3ff; font-size:18px; min-height:22px; }
+  #text { font-size:20px; line-height:1.5; white-space:pre-wrap; }
+  #more { position:absolute; right:14px; bottom:8px; color:#9fc3ff; animation:blink 1s infinite; }
+  @keyframes blink { 50% { opacity:0 } }
+  #choices { position:absolute; inset:0; display:flex; flex-direction:column; gap:14px;
+             align-items:center; justify-content:center; background:rgba(0,0,0,.35); }
+  #choices button {
+    min-width:340px; padding:10px 24px; font-size:20px; font-family:inherit;
+    background:rgba(10,20,60,.88); color:#fff; border:1px solid #9fc3ff; border-radius:6px; cursor:pointer;
+  }
+  #choices button:hover { background:rgba(60,90,160,.9); }
+  #title { position:absolute; inset:0; display:flex; flex-direction:column; gap:18px;
+           align-items:center; justify-content:center; background:#000; z-index:10; cursor:pointer; }
+  #title h1 { font-size:42px; letter-spacing:.3em; margin:0; color:#cfe0ff; }
+  #title p { color:#8899bb; }
+  #hud { position:fixed; left:8px; top:6px; font-size:12px; color:#667; font-family:monospace; }
+  .hidden { display:none !important; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="stage">
+    <img id="bg" alt="">
+    <div id="fill"></div>
+    <div id="sprites"></div>
+    <video id="movie" class="hidden" playsinline></video>
+    <div id="textbox"><div id="speaker"></div><div id="text"></div><div id="more">▼</div></div>
+    <div id="choices" class="hidden"></div>
+    <div id="title"><h1>Ever17</h1><p>-the out of infinity-</p><p id="titlehint">click to start · 点击开始</p></div>
+  </div>
+</div>
+<div id="hud"></div>
+<script src="bundle.js"></script>
+</body>
+</html>

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join, basename } from "node:path";
 import type { IrScene } from "e17-parser";
 import { AssetLibrary, ARCHIVES, RAW_PCM_CHANNELS, RAW_PCM_SAMPLE_RATE } from "./library.js";
@@ -20,6 +21,10 @@ usage:
   e17-assets scene        <gameDir> <scene.json> -o <dir>
                                                          extract every asset an IR scene references
                                                          and write a manifest.json
+  e17-assets scenes       <gameDir> <scene.json...> -o <dir>
+                                                         same, merged over many scenes (deduplicated)
+  e17-assets movie        <gameDir> <name...> -o <dir>   recover MPEG-1 movies from movie/*.e17
+                                                         (transcodes to .mp4 when ffmpeg is present)
 `);
   process.exit(2);
 }
@@ -129,15 +134,25 @@ switch (cmd) {
     break;
   }
 
-  case "scene": {
-    const scenePath = rest[0];
+  case "scene":
+  case "scenes": {
+    const scenePaths = cmd === "scene" ? rest.slice(0, 1) : rest;
     const outDir = flags.get("-o");
-    if (!scenePath || !outDir) usage();
-    const scene = JSON.parse(readFileSync(scenePath, "utf8")) as IrScene;
-    const refs = collectSceneAssets(scene);
+    if (scenePaths.length === 0 || !outDir) usage();
+    const seen = new Map<string, ReturnType<typeof collectSceneAssets>[number]>();
+    const names: string[] = [];
+    for (const p of scenePaths) {
+      const scene = JSON.parse(readFileSync(p, "utf8")) as IrScene;
+      names.push(scene.scene);
+      for (const ref of collectSceneAssets(scene)) {
+        const key = `${ref.kind}:${ref.name.toLowerCase()}`;
+        if (!seen.has(key)) seen.set(key, ref);
+      }
+    }
+    const refs = [...seen.values()];
     const images = refs.filter((r) => r.kind === "image").length;
     console.log(
-      `${scene.scene}: ${refs.length} referenced assets (${images} images, ${refs.length - images} audio)`,
+      `${names.join(",")}: ${refs.length} referenced assets (${images} images, ${refs.length - images} audio)`,
     );
     let ok = 0;
     const manifest = extractAssets(
@@ -150,11 +165,33 @@ switch (cmd) {
           else console.error(`  MISSING ${name}: ${err?.message}`);
         },
       },
-      [basename(scenePath)],
+      names,
     );
     writeManifest(outDir, manifest);
     console.log(`extracted ${ok}/${refs.length} -> ${join(outDir, "manifest.json")}`);
     if (manifest.missing.length > 0) console.log(`${manifest.missing.length} missing`);
+    break;
+  }
+
+  case "movie": {
+    const outDir = flags.get("-o");
+    if (!outDir || rest.length === 0) usage();
+    mkdirSync(outDir, { recursive: true });
+    for (const name of rest) {
+      const src = join(gameDir, "movie", `${name.toLowerCase()}.e17`);
+      const data = readFileSync(src);
+      // .e17 movies are MPEG-1 program streams with the first byte overwritten
+      // (00 -> FF); restoring it yields a valid file (verified with ffprobe:
+      // mpeg1video 640x480).
+      if (data[0] !== 0xff) console.error(`${name}: first byte 0x${data[0]!.toString(16)}, expected ff`);
+      data[0] = 0x00;
+      const mpg = join(outDir, `${name.toLowerCase()}.mpg`);
+      writeFileSync(mpg, data);
+      const mp4 = join(outDir, `${name.toLowerCase()}.mp4`);
+      const res = spawnSync("ffmpeg", ["-y", "-v", "error", "-i", mpg, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", mp4]);
+      if (res.status === 0) console.log(`${name} -> ${mp4}`);
+      else console.log(`${name} -> ${mpg} (no ffmpeg transcode: ${res.error?.message ?? res.status})`);
+    }
     break;
   }
 

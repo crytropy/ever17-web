@@ -1,6 +1,6 @@
-import type { AssetResolver } from "./assets.js";
-import { evaluateCondition, type BranchPolicy } from "./conditions.js";
+import { evaluateCondition, MOD_ADD, MOD_ASSIGN } from "./conditions.js";
 import type {
+  AssetIndex,
   ChoiceEvent,
   ChoiceOptionView,
   IrOp,
@@ -33,22 +33,25 @@ export interface VmOptions {
   onOp?: (op: IrOp, block: string) => void;
   /** Safety valve against a malformed/cyclic IR; counted in executed ops. */
   stepLimit?: number;
-  /**
-   * How to resolve a guard: "evaluate" (default) tests the condition against
-   * runtime variables; "take"/"skip" force one side for experimentation.
-   */
-  branchPolicy?: BranchPolicy;
-  /** What to do when a condition cannot be evaluated. Default: "skip". */
-  unknownBranch?: "take" | "skip";
-  onBranch?: (info: BranchInfo) => void;
+  /** What to do when a VAR_JUMP condition cannot be evaluated. Default: "fallthrough". */
+  unknownJump?: "jump" | "fallthrough";
+  /** Reports every VAR_JUMP decision. */
+  onVarJump?: (info: VarJumpInfo) => void;
+  /** Reports every variable write. */
+  onVarSet?: (varId: number, value: number, mod: number, block: string) => void;
+  /** Shared variable table (cross-scene persistence); a fresh one when absent. */
+  vars?: Map<number, number>;
+  /** Shared system-variable table (sysVarTest reads; e.g. "already seen"). */
+  sysVars?: Map<number, number>;
 }
 
-export interface BranchInfo {
+export interface VarJumpInfo {
   block: string;
   condition: string;
-  /** undefined when the guard's relation or operands are not understood. */
+  /** undefined when the relation or operands are not understood. */
   value: boolean | undefined;
-  taken: boolean;
+  jumped: boolean;
+  target: string;
 }
 
 export interface ChoiceDecision {
@@ -65,7 +68,7 @@ export interface ChoiceDecision {
  */
 export class SceneVm {
   readonly scene: IrScene;
-  private readonly assets: AssetResolver;
+  private readonly assets: AssetIndex;
   private readonly opts: VmOptions;
 
   /** Current block label and index of the next op inside it. */
@@ -74,15 +77,19 @@ export class SceneVm {
   private state: SceneState = { background: null, sprites: new Map(), bgm: null, fill: null };
   private steps = 0;
   private finished = false;
-  /** Scenario variables written by choices, keyed by variable id. */
-  readonly vars = new Map<number, number>();
+  /** Scenario variables (choices, VAR_SET writes), keyed by variable id. */
+  readonly vars: Map<number, number>;
+  /** System-space variables read by sysVarTest jumps. */
+  readonly sysVars: Map<number, number>;
   /** Ordered log of visited blocks, for merge/branch verification. */
   readonly blockTrace: string[] = [];
 
-  constructor(scene: IrScene, assets: AssetResolver, opts: VmOptions = {}) {
+  constructor(scene: IrScene, assets: AssetIndex, opts: VmOptions = {}) {
     this.scene = scene;
     this.assets = assets;
     this.opts = opts;
+    this.vars = opts.vars ?? new Map();
+    this.sysVars = opts.sysVars ?? new Map();
     this.block = scene.entry;
     if (!scene.blocks[this.block]) {
       const first = Object.keys(scene.blocks).sort()[0];
@@ -184,15 +191,25 @@ export class SceneVm {
         }
 
         case "choice": {
-          const options: ChoiceOptionView[] = op.options.map((o) => ({
-            index: o.index,
-            text: o.text,
-            target: o.target,
-            // Option visibility conditions are not yet proven (see
-            // docs/sc3-format.md §5); every option is offered and the
-            // condition is surfaced untouched for the front end.
-            enabled: true,
-          }));
+          const options: ChoiceOptionView[] = op.options.map((o) => {
+            // Visibility: 0x0b 0x02 options are hidden once their variable is
+            // zeroed (t_1c investigation menus). Unevaluable conditions leave
+            // the option enabled rather than guessing it away.
+            const cond = o.condition
+              ? evaluateCondition(o.condition, this.vars, this.sysVars)
+              : undefined;
+            return {
+              index: o.index,
+              text: o.text,
+              target: o.target,
+              enabled: cond?.value !== false,
+            };
+          });
+          if (options.length > 0 && options.every((o) => !o.enabled)) {
+            // No visible options: the scripts gate menus so this state is not
+            // reached in normal play (t_1c entry#1); continue linearly.
+            break;
+          }
           return {
             type: "choice",
             id: op.id,
@@ -260,25 +277,38 @@ export class SceneVm {
           return { type: "end", reason: "gotoScene", nextScene: op.scene };
         }
 
-        case "branch": {
-          // A guard controls exactly one following instruction: the "taken"
-          // continuation runs it, the "skip" continuation jumps past it.
-          this.opts.onOp?.(op, this.block);
-          const policy = this.opts.branchPolicy ?? "evaluate";
-          const evaluated = evaluateCondition(op.condition, this.vars);
-          let taken: boolean;
-          if (policy === "take") taken = true;
-          else if (policy === "skip") taken = false;
-          else if (evaluated.value !== undefined) taken = evaluated.value;
-          else taken = (this.opts.unknownBranch ?? "skip") === "take";
-          this.opts.onBranch?.({
+        case "varSet": {
+          const value = op.value.type === "const" ? op.value.value : null;
+          if (value === null) {
+            // non-constant writes have not been observed in story scripts
+            this.opts.onOp?.(op, this.block);
+            break;
+          }
+          const prev = this.vars.get(op.varId) ?? 0;
+          const next =
+            op.mod === MOD_ASSIGN ? value
+            : op.mod === MOD_ADD ? prev + value
+            : value; // unknown mod: best effort, reported below
+          this.vars.set(op.varId, next);
+          this.opts.onVarSet?.(op.varId, next, op.mod, this.block);
+          if (op.mod !== MOD_ASSIGN && op.mod !== MOD_ADD) this.opts.onOp?.(op, this.block);
+          break;
+        }
+
+        case "varJump": {
+          const evaluated = evaluateCondition(op.condition, this.vars, this.sysVars);
+          const jumped =
+            evaluated.value !== undefined
+              ? evaluated.value
+              : (this.opts.unknownJump ?? "fallthrough") === "jump";
+          this.opts.onVarJump?.({
             block: this.block,
             condition: evaluated.text,
             value: evaluated.value,
-            taken,
+            jumped,
+            target: op.target,
           });
-          const target = taken ? op.takenTarget : op.skipTarget;
-          if (target && target !== "?" && this.goto(target)) continue;
+          if (jumped && this.goto(op.target)) continue;
           break;
         }
 

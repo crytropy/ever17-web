@@ -2,6 +2,8 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { AssetResolver } from "./assets.js";
 import { runScene } from "./player.js";
+import { SessionRunner } from "./session.js";
+import { fsSceneSource } from "./scene-source.js";
 import { SceneVm } from "./vm.js";
 import { renderFrame } from "./frame.js";
 import type { IrScene, PlayerEvent } from "./types.js";
@@ -14,12 +16,18 @@ usage:
   vn trace <scene.json> <manifest.json> [options]   play and print block/asset trace
   vn frame <scene.json> <manifest.json> -n <line> -o <out.png>
                                                     render the composited frame at a line
+  vn route <irDir> [manifest.json] [options]        chain scenes from --start to an ending;
+                                                    reports route, gaps, unknown semantics
+  vn serve <irDir> <assetsDir> [--port n]           bundle + serve the browser client
 
 options:
   --choice <id>=<option>   answer the choice with that id (repeatable)
   --choices <a,b,c>        answer choices in encounter order
   --max <n>                stop after n dialogue lines
   --quiet                  suppress the transcript
+  --start <scene>          route: first scene (default op00)
+  --policy first|last      route: default answer for unscripted choices
+  --scene-choice <scene:id=opt>  route: per-scene answer (repeatable)
 `);
   process.exit(2);
 }
@@ -32,6 +40,10 @@ let maxLines = 0;
 let quiet = false;
 let frameLine = 0;
 let outPath = "";
+let startScene = "op00";
+let port = 8017;
+let policy: "first" | "last" = "first";
+const choiceByScene: Record<string, number> = {};
 
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i]!;
@@ -52,21 +64,81 @@ for (let i = 0; i < argv.length; i++) {
     outPath = argv[++i] ?? "";
   } else if (a === "--quiet") {
     quiet = true;
+  } else if (a === "--start") {
+    startScene = argv[++i] ?? "op00";
+  } else if (a === "--policy") {
+    const v = argv[++i];
+    if (v !== "first" && v !== "last") usage();
+    policy = v;
+  } else if (a === "--port") {
+    port = Number(argv[++i] ?? "8017");
+  } else if (a === "--scene-choice") {
+    const v = argv[++i];
+    const m = v?.match(/^([^:]+):(\d+)=(\d+)$/);
+    if (!m) usage();
+    choiceByScene[`${m[1]!.toLowerCase()}:${m[2]}`] = Number(m[3]);
   } else if (a.startsWith("-")) usage();
   else positional.push(a);
 }
 
 const [cmd, scenePath, manifestPath] = positional;
-if (!cmd || !scenePath || !manifestPath) usage();
-
-const scene = JSON.parse(readFileSync(scenePath, "utf8")) as IrScene;
-const assets = new AssetResolver(manifestPath);
+if (!cmd || !scenePath) usage();
+if (cmd !== "route" && !manifestPath) usage();
 
 function describeState(ev: Extract<PlayerEvent, { type: "dialogue" | "choice" }>): string {
   const bg = ev.state.background?.asset ?? (ev.state.fill != null ? `fill:${ev.state.fill}` : "-");
   const sp = ev.state.sprites.map((s) => `${s.asset}@${s.x ?? "?"}`).join(",") || "-";
   return `bg=${bg} sprites=${sp}`;
 }
+
+if (cmd === "serve") {
+  const irDir = scenePath;
+  const assetsDir = manifestPath;
+  if (!assetsDir) usage();
+  const { serve } = await import("./serve.js");
+  serve({ irDir, assetsDir, port });
+} else if (cmd === "route") {
+  const source = fsSceneSource(scenePath, manifestPath);
+  const runner = new SessionRunner(source, {
+    choiceByScene,
+    ...(Object.keys(choiceById).length ? { choiceById } : {}),
+    policy,
+  });
+  const r = runner.run(startScene);
+  console.log(`route: ${r.route.join(" -> ")}`);
+  console.log(`end: ${r.end} (${r.endDetail})`);
+  for (const s of r.scenes) {
+    const ch = s.choices.map((c) => `#${c.id}=[${c.option}]${c.text}`).join(" ");
+    console.log(
+      `  ${s.scene.padEnd(8)} ${String(s.lines).padStart(4)} lines  ${String(s.blocks).padStart(3)} blocks  ${s.exit}${ch ? "  " + ch : ""}`,
+    );
+  }
+  console.log(`total lines: ${r.totalLines}`);
+  const g = r.gaps;
+  if (g.unknownOps.size) {
+    console.log("reachable unknown ops:");
+    for (const [k, n] of [...g.unknownOps].sort((a, b) => b[1] - a[1])) console.log(`  ${n
+      .toString()
+      .padStart(5)}x ${k}`);
+  }
+  if (g.unevaluableJumps.size) {
+    console.log("unevaluable jumps:");
+    for (const [k, n] of g.unevaluableJumps) console.log(`  ${n}x ${k}`);
+  }
+  if (g.conditionedOptions.size) {
+    console.log(`choice options with conditions: ${[...g.conditionedOptions.keys()].join(", ")}`);
+  }
+  if (g.unresolvedAssets.size) console.log(`unresolved assets: ${g.unresolvedAssets.size}`);
+  const mods = [...g.unknownMods].filter(([m]) => m !== 0x14 && m !== 0x17);
+  if (mods.length) console.log(`unknown varSet mods: ${mods.map(([m, n]) => `0x${m.toString(16)}x${n}`).join(" ")}`);
+  process.exit(r.end === "ending" ? 0 : 1);
+}
+
+if (cmd === "serve") {
+  // server keeps running; nothing below applies
+} else {
+const scene = JSON.parse(readFileSync(scenePath, "utf8")) as IrScene;
+const assets = new AssetResolver(manifestPath!);
 
 switch (cmd) {
   case "play":
@@ -155,4 +227,5 @@ switch (cmd) {
 
   default:
     usage();
+}
 }

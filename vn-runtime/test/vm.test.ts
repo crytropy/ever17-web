@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SceneVm } from "../src/vm.js";
-import { evaluateCondition, REL_EQ, REL_NE } from "../src/conditions.js";
+import { evaluateCondition } from "../src/conditions.js";
 import type { IrCondition, IrScene } from "../src/types.js";
 
 /** Minimal in-memory stand-in for AssetResolver. */
@@ -26,29 +26,45 @@ function scene(blocks: IrScene["blocks"], entry = "A"): IrScene {
   };
 }
 
-const varTest = (varId: number, rel: number, value: number): IrCondition => ({
-  type: "varTest",
+const compare = (varId: number, rel: number, value: number): IrCondition => ({
+  type: "varCompare",
   varId,
-  ops: [0x14, rel],
-  rhs: { type: "const", value },
-  opcode: "fe28",
+  rel,
+  value: { type: "const", value },
 });
 
-describe("condition evaluation", () => {
-  it("treats 0x14 as equality and 0x17 as inequality", () => {
+describe("condition evaluation (VAR_JUMP relations)", () => {
+  it("evaluates == (0x0c) and != (0x0d)", () => {
     const vars = new Map([[1203, 2]]);
-    expect(evaluateCondition(varTest(1203, REL_EQ, 2), vars).value).toBe(true);
-    expect(evaluateCondition(varTest(1203, REL_EQ, 0), vars).value).toBe(false);
-    expect(evaluateCondition(varTest(1203, REL_NE, 2), vars).value).toBe(false);
-    expect(evaluateCondition(varTest(1203, REL_NE, 0), vars).value).toBe(true);
+    expect(evaluateCondition(compare(1203, 0x0c, 2), vars).value).toBe(true);
+    expect(evaluateCondition(compare(1203, 0x0c, 0), vars).value).toBe(false);
+    expect(evaluateCondition(compare(1203, 0x0d, 2), vars).value).toBe(false);
+    expect(evaluateCondition(compare(1203, 0x0d, 0), vars).value).toBe(true);
+  });
+
+  it("evaluates the provisional route-gate relations >= (0x10), > (0x11), <= (0x0f)", () => {
+    const vars = new Map([[1207, 17]]);
+    expect(evaluateCondition(compare(1207, 0x10, 17), vars).value).toBe(true);
+    expect(evaluateCondition(compare(1207, 0x10, 18), vars).value).toBe(false);
+    // 0x11 is strictly-greater: t_6b's ask-menu exits on 1211 > 1
+    expect(evaluateCondition(compare(1207, 0x11, 16), vars).value).toBe(true);
+    expect(evaluateCondition(compare(1207, 0x11, 17), vars).value).toBe(false);
+    expect(evaluateCondition(compare(1207, 0x0f, 17), vars).value).toBe(true);
   });
 
   it("defaults unwritten variables to 0", () => {
-    expect(evaluateCondition(varTest(999, REL_EQ, 0), new Map()).value).toBe(true);
+    expect(evaluateCondition(compare(999, 0x0c, 0), new Map()).value).toBe(true);
+  });
+
+  it("evaluates sysVarTest against the system table", () => {
+    expect(evaluateCondition({ type: "sysVarTest", varId: 7 }, new Map(), new Map()).value).toBe(false);
+    expect(
+      evaluateCondition({ type: "sysVarTest", varId: 7 }, new Map(), new Map([[7, 1]])).value,
+    ).toBe(true);
   });
 
   it("reports unknown relations as unevaluable rather than guessing", () => {
-    expect(evaluateCondition(varTest(1, 0x1b, 0), new Map()).value).toBeUndefined();
+    expect(evaluateCondition(compare(1, 0x1b, 0), new Map()).value).toBeUndefined();
     expect(evaluateCondition({ type: "unknownExpr", raw: "??" }, new Map()).value).toBeUndefined();
   });
 });
@@ -80,59 +96,80 @@ describe("SceneVm", () => {
     expect(vm.next()).toMatchObject({ type: "end", reason: "gotoScene", nextScene: "S_1A2" });
   });
 
-  it("takes a guarded instruction when the condition holds and skips it otherwise", () => {
-    const build = (rhs: number) =>
-      scene({
-        A: {
-          next: null,
-          ops: [
-            { op: "branch", condition: varTest(1203, REL_EQ, rhs), takenTarget: "T", skipTarget: "S" },
-          ],
-        },
-        T: { next: null, ops: [dialogue("taken")] },
-        S: { next: null, ops: [dialogue("skipped")] },
-      });
-    // var 1203 defaults to 0
-    expect(new SceneVm(build(0), noAssets).next()).toMatchObject({ text: "taken" });
-    expect(new SceneVm(build(7), noAssets).next()).toMatchObject({ text: "skipped" });
-  });
-
-  it("honours a forced branch policy", () => {
-    const s = scene({
-      A: {
-        next: null,
-        ops: [{ op: "branch", condition: varTest(1, REL_EQ, 99), takenTarget: "T", skipTarget: "S" }],
-      },
-      T: { next: null, ops: [dialogue("taken")] },
-      S: { next: null, ops: [dialogue("skipped")] },
-    });
-    expect(new SceneVm(s, noAssets, { branchPolicy: "take" }).next()).toMatchObject({ text: "taken" });
-    expect(new SceneVm(s, noAssets, { branchPolicy: "skip" }).next()).toMatchObject({ text: "skipped" });
-  });
-
-  it("defaults an unevaluable guard to skip and reports it", () => {
-    const seen: unknown[] = [];
+  it("executes varSet: assign (0x14) and add (0x17)", () => {
     const vm = new SceneVm(
       scene({
         A: {
           next: null,
           ops: [
-            {
-              op: "branch",
-              condition: { type: "unknownExpr", raw: "mystery" },
-              takenTarget: "T",
-              skipTarget: "S",
-            },
+            { op: "varSet", varId: 1200, mod: 0x14, value: { type: "const", value: 5 } },
+            { op: "varSet", varId: 1206, mod: 0x17, value: { type: "const", value: 1 } },
+            { op: "varSet", varId: 1206, mod: 0x17, value: { type: "const", value: 1 } },
+            dialogue("done"),
           ],
         },
-        T: { next: null, ops: [dialogue("taken")] },
-        S: { next: null, ops: [dialogue("skipped")] },
       }),
       noAssets,
-      { onBranch: (i) => seen.push(i) },
     );
-    expect(vm.next()).toMatchObject({ text: "skipped" });
-    expect(seen).toEqual([{ block: "A", condition: "mystery", value: undefined, taken: false }]);
+    expect(vm.next()).toMatchObject({ text: "done" });
+    expect(vm.vars.get(1200)).toBe(5);
+    expect(vm.vars.get(1206)).toBe(2);
+  });
+
+  it("takes a varJump when the comparison holds and falls through otherwise", () => {
+    const build = (initial: number) =>
+      scene({
+        A: {
+          next: "F",
+          ops: [
+            { op: "varSet", varId: 1203, mod: 0x14, value: { type: "const", value: initial } },
+            { op: "varJump", condition: compare(1203, 0x0c, 1), target: "T" },
+          ],
+        },
+        F: { next: null, ops: [dialogue("fellthrough")] },
+        T: { next: null, ops: [dialogue("jumped")] },
+      });
+    expect(new SceneVm(build(1), noAssets).next()).toMatchObject({ text: "jumped" });
+    expect(new SceneVm(build(0), noAssets).next()).toMatchObject({ text: "fellthrough" });
+  });
+
+  it("reports an unevaluable varJump and falls through by default", () => {
+    const seen: unknown[] = [];
+    const vm = new SceneVm(
+      scene({
+        A: {
+          next: "F",
+          ops: [{ op: "varJump", condition: { type: "unknownExpr", raw: "mystery" }, target: "T" }],
+        },
+        F: { next: null, ops: [dialogue("fellthrough")] },
+        T: { next: null, ops: [dialogue("jumped")] },
+      }),
+      noAssets,
+      { onVarJump: (i) => seen.push(i) },
+    );
+    expect(vm.next()).toMatchObject({ text: "fellthrough" });
+    expect(seen).toEqual([
+      { block: "A", condition: "mystery", value: undefined, jumped: false, target: "T" },
+    ]);
+  });
+
+  it("shares an external variable table across VMs (cross-scene persistence)", () => {
+    const vars = new Map<number, number>();
+    const sceneA = scene({
+      A: { next: null, ops: [
+        { op: "varSet", varId: 1203, mod: 0x14, value: { type: "const", value: 2 } },
+        { op: "gotoScene", scene: "B" },
+      ] },
+    });
+    const sceneB = scene({
+      H: { next: "F", ops: [{ op: "varJump", condition: compare(1203, 0x0c, 2), target: "R" }] },
+      F: { next: null, ops: [dialogue("fresh")] },
+      R: { next: null, ops: [dialogue("resumed")] },
+    }, "H");
+    const vmA = new SceneVm(sceneA, noAssets, { vars });
+    expect(vmA.next()).toMatchObject({ type: "end", reason: "gotoScene", nextScene: "B" });
+    const vmB = new SceneVm(sceneB, noAssets, { vars });
+    expect(vmB.next()).toMatchObject({ text: "resumed" });
   });
 
   it("dispatches a choice to the selected target and records the result variable", () => {

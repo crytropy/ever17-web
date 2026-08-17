@@ -29,17 +29,54 @@ function exprToValue(e: RawExpr): IrValue {
   return v !== undefined ? { type: "const", value: v } : { type: "expr", raw: formatExpr(e) };
 }
 
-function conditionOf(ins: Instruction): IrCondition {
+/**
+ * VAR_SET (fe 28): lhs '0a <var> 0x14 <mod>' + value expression.
+ * Returns undefined when the lhs does not match the known shape.
+ */
+function parseVarSet(ins: Instruction): { varId: number; mod: number; value: IrValue } | undefined {
   const lhs = ins.operands[0];
   const rhs = ins.operands[1];
-  if (lhs?.kind === "expr" && rhs?.kind === "expr") {
-    const vt = exprVarTest(lhs.expr);
-    if (vt) {
-      return { type: "varTest", varId: vt.varId, ops: vt.ops, rhs: exprToValue(rhs.expr), opcode: ins.opcode.toString("hex") };
-    }
-    return { type: "unknownExpr", raw: `${formatExpr(lhs.expr)} ?? ${formatExpr(rhs.expr)}` };
+  if (lhs?.kind !== "expr" || rhs?.kind !== "expr") return undefined;
+  const t = lhs.expr.tokens;
+  // [op 0a] [imm var] [op 14] [op mod]
+  if (
+    t.length === 4 &&
+    t[0]!.kind === "op" && t[0]!.op === 0x0a &&
+    t[1]!.kind === "imm" &&
+    t[2]!.kind === "op" && t[2]!.op === 0x14 &&
+    t[3]!.kind === "op"
+  ) {
+    return { varId: t[1]!.value, mod: t[3]!.op, value: exprToValue(rhs.expr) };
   }
-  return { type: "unknownExpr", raw: ins.raw.toString("hex") };
+  return undefined;
+}
+
+/**
+ * VAR_JUMP (00 0a) condition, from its expression operand:
+ *   '28 0a <var> 14 <rel> 01 <value> 01'  -> varCompare
+ *   '2d 0a <var> 14'                      -> sysVarTest (no value)
+ */
+function parseVarJumpCondition(ins: Instruction): IrCondition {
+  const e = ins.operands[1];
+  if (e?.kind !== "expr") return { type: "unknownExpr", raw: ins.raw.toString("hex") };
+  const t = e.expr.tokens;
+  const isOp = (i: number, op: number): boolean => t[i]?.kind === "op" && t[i]!.op === op;
+  if (
+    t.length === 8 &&
+    isOp(0, 0x28) && isOp(1, 0x0a) && t[2]?.kind === "imm" && isOp(3, 0x14) &&
+    t[4]?.kind === "op" && isOp(5, 0x01) && t[6]?.kind === "imm" && isOp(7, 0x01)
+  ) {
+    return {
+      type: "varCompare",
+      varId: t[2]!.value,
+      rel: (t[4] as { kind: "op"; op: number }).op,
+      value: { type: "const", value: t[6]!.value },
+    };
+  }
+  if (t.length === 4 && isOp(0, 0x2d) && isOp(1, 0x0a) && t[2]?.kind === "imm" && isOp(3, 0x14)) {
+    return { type: "sysVarTest", varId: t[2]!.value };
+  }
+  return { type: "unknownExpr", raw: formatExpr(e.expr) };
 }
 
 interface TextSegment {
@@ -126,9 +163,16 @@ export function chunkChoice(parsed: ParsedTextChunk): ChoiceChunkInfo | undefine
       sawChoice = true;
     } else if (t.kind === "optionText") {
       const opt: { text: string; condition?: IrCondition } = { text: t.text };
-      if (pendingCond && pendingCond.tokens.length > 0) {
-        // Text-side option conditions are self-contained expressions; their
-        // comparison semantics are not yet proven, so keep them opaque.
+      if (t.conditionVar !== undefined) {
+        // 0x0b 0x02: shown iff the variable is nonzero.
+        opt.condition = {
+          type: "varCompare",
+          varId: t.conditionVar,
+          rel: 0x0d,
+          value: { type: "const", value: 0 },
+        };
+      } else if (pendingCond && pendingCond.tokens.length > 0) {
+        // 0x0a-prefixed conditions; semantics not yet proven, kept opaque.
         opt.condition = { type: "unknownExpr", raw: formatExpr(pendingCond) };
       }
       pendingCond = null;
@@ -189,9 +233,13 @@ export function lowerScene(
         }
       }
     }
-    const fall = block.successors.find((s) => s.type === "fallthrough");
+    // The linear continuation: a plain fallthrough edge, or the not-taken
+    // side of a VAR_JUMP that terminates the block.
+    const fall =
+      block.successors.find((s) => s.type === "fallthrough") ??
+      block.successors.find((s) => s.type === "condition" && !s.taken);
     blocks[label(addr)] = {
-      next: fall ? label(fall.target) : null,
+      next: fall && fall.type !== "scene" ? label(fall.target) : null,
       ops,
     };
   }
@@ -323,8 +371,39 @@ function lowerInstruction(
       return [{ op: "waitFrames", frames: operandImm(ops[0]) }];
     case "SAVE_POINT":
       return [{ op: "savePoint", id: ops[0]?.kind === "string" ? ops[0].value : "?" }];
-    case "SET_VAR":
-      return [{ op: "setVar", raw: ins.raw.toString("hex") }];
+    case "VAR_SET": {
+      const parsed = parseVarSet(ins);
+      if (!parsed) {
+        return [
+          {
+            op: "unknown",
+            opcode: ins.opcode.toString("hex"),
+            mnemonic: "VAR_SET",
+            raw: ins.raw.toString("hex"),
+            operands: ins.operands.map(formatOperand),
+          },
+        ];
+      }
+      return [{ op: "varSet", ...parsed }];
+    }
+    case "VAR_JUMP": {
+      const tgt = ins.operands[2];
+      const target =
+        tgt?.kind === "entryRef" ? file.entryPoints[tgt.index - 1] : undefined;
+      if (target === undefined) {
+        warnings.push(`VAR_JUMP at 0x${ins.address.toString(16)} with unresolvable target`);
+        return [
+          {
+            op: "unknown",
+            opcode: ins.opcode.toString("hex"),
+            mnemonic: "VAR_JUMP",
+            raw: ins.raw.toString("hex"),
+            operands: ins.operands.map(formatOperand),
+          },
+        ];
+      }
+      return [{ op: "varJump", condition: parseVarJumpCondition(ins), target: label(target) }];
+    }
     case "MESSAGE": {
       const t = ops[0];
       if (t?.kind !== "textRef") return undefined;
@@ -387,10 +466,62 @@ function lowerInstruction(
       return [{ op: "choice", id, resultVar, options }];
     }
     case "CHOICE_BEGIN":
-    case "CHOICE_COND":
-    case "CHOICE_OPTION":
     case "CHOICE_END":
       return "consumed";
+    case "CHOICE_COND":
+    case "CHOICE_OPTION": {
+      // Rows normally belong to a SHOW_CHOICE/CHOICE_BEGIN and are consumed by
+      // its lowering. A CHOICE_COND + row run with no owning choice is a bare
+      // dispatch table on an arbitrary register: y_ed's head dispatches the
+      // ending id in var 1223 this way ("if var == k -> jump").
+      let j = idx - 1;
+      let owned = false;
+      let condVar: number | null = null;
+      const machinery = new Set(["CHOICE_COND", "CHOICE_OPTION", "PAD"]);
+      while (j >= 0) {
+        const prev = instrs[j]!;
+        if (prev.mnemonic === "SHOW_CHOICE" || prev.mnemonic === "CHOICE_BEGIN") {
+          owned = true;
+          break;
+        }
+        if (!machinery.has(prev.mnemonic)) break;
+        j -= 1;
+      }
+      if (owned) return "consumed";
+      if (ins.mnemonic === "CHOICE_COND") return "consumed"; // selector only
+      // find the register from the nearest preceding CHOICE_COND in the run
+      for (let k = idx - 1; k >= 0; k--) {
+        const prev = instrs[k]!;
+        if (prev.mnemonic === "CHOICE_COND") {
+          const e = prev.operands[0];
+          if (e?.kind === "expr") {
+            const t = e.expr.tokens;
+            if (t.length === 4 && t[2]?.kind === "imm") condVar = t[2].value;
+          }
+          break;
+        }
+        if (!machinery.has(prev.mnemonic)) break;
+      }
+      const optIdx = operandImm(ins.operands[0]);
+      const tgt = ins.operands[1];
+      const target = tgt?.kind === "entryRef" ? file.entryPoints[tgt.index - 1] : undefined;
+      if (optIdx === null || target === undefined) {
+        warnings.push(`bare dispatch row at 0x${ins.address.toString(16)} unresolvable`);
+        return "consumed";
+      }
+      return [
+        {
+          op: "varJump",
+          condition: {
+            type: "varCompare",
+            varId: condVar ?? 1203,
+            rel: 0x0c,
+            value: { type: "const", value: optIdx },
+          },
+          target: label(target),
+        },
+      ];
+    }
     case "JUMP": {
       const t = ops[0];
       if (t?.kind === "entryRef") {
@@ -401,21 +532,7 @@ function lowerInstruction(
     }
     case "GOTO_SCRIPT":
       return [{ op: "gotoScene", scene: ops[0]?.kind === "string" ? ops[0].value : "?" }];
-    case "IF_EQ":
-    case "IF_2D":
-    case "IF_2E": {
-      const cond = block.successors.filter((s) => s.type === "condition");
-      const taken = cond.find((s) => s.type === "condition" && s.taken);
-      const skip = cond.find((s) => s.type === "condition" && !s.taken);
-      return [
-        {
-          op: "branch",
-          condition: conditionOf(ins),
-          takenTarget: taken && taken.type === "condition" ? label(taken.target) : "?",
-          skipTarget: skip && skip.type === "condition" ? label(skip.target) : null,
-        },
-      ];
-    }
+
     case "SWITCH": {
       const sel = ops[0];
       const list = ops[1];

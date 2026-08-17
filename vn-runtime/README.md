@@ -22,13 +22,13 @@ SceneVm.choose(event, { option })
 `state` carries the resolved background, sprites (with screen x), fill and BGM,
 so a front end only has to draw what it is handed.
 
-**Conditionals.** Guards are evaluated against runtime variables using the
-relations established in
-[sc3-format.md §6.1](../e17-parser/docs/sc3-format.md): `0x14` is equality,
-`0x17` is inequality, variables default to 0. Guards using a still-unidentified
-relation are reported through `onBranch` as unevaluable and take the skip path
-rather than guessing. `branchPolicy: "take" | "skip"` forces either side for
-experimentation.
+**Variables and conditionals.** `varSet` ops execute (`:=` and the affection
+`+=`); `varJump` compares against the shared variable table using the relations
+in [sc3-format.md §6.1](../e17-parser/docs/sc3-format.md) (==, !=, >=, >).
+Unevaluable conditions are reported through `onVarJump` and fall through rather
+than guessing. A `SessionRunner` chains scenes across `gotoScene` with one
+variable table — exactly how the engine's cross-scene state works — and reports
+every reachable gap (unknown ops, unevaluable jumps, unresolved assets).
 
 **Sprite placement.** Sprite x operands live in a 640-wide logical space
 (320 = centre) while the artwork is 800×600, and each sprite's PRT header
@@ -54,9 +54,20 @@ npm run vn -- frame build/ir/s_1a.json build/assets/s_1a/manifest.json -n 58 -o 
 Options: `--choice <id>=<option>` (repeatable), `--choices a,b,c` (in encounter
 order), `--max <n>`, `--quiet`.
 
+## Browser client
+
+`vn serve <irDir> <assetsDir>` bundles `src/web/` (esbuild) and serves a
+minimal playable client: click-to-advance text with speaker names, sprite/CG
+compositing, choices, BGM/SE/voice, ending movies, and scene chaining with
+persistent variables. It consumes only `/ir/*.json` + `/assets/manifest.json`
+and knows no scene names (the start scene is a URL parameter).
+
 ## Status
 
-`s_1a` plays end to end: 622 lines, both choices, 218 assets, exiting to
-`S_1A2`. Both branches of choice 44 play their own reply and reconverge at
-block `0x2E0`. Effects, waits and still-unknown opcodes are surfaced through
-`onOp` rather than executed.
+A complete route plays from New Game to an ending with zero scene-specific
+code: op00 → t_1a…t_6b → tt6a → tt7a → y_ed (Tsugumi ending movie + coda) —
+22 scenes, 12,308 lines, 43 choices, verified both headlessly
+(`vn route build/ir`) and click-through in the browser. Alternative choice
+policies reach the You bad end and the Sara good end + epilogue. Effects,
+waits and still-unknown opcodes are surfaced through `onOp` rather than
+executed.

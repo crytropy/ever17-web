@@ -102,11 +102,14 @@ describe.skipIf(!HAVE_PIPELINE)("s_1a end-to-end (IR + extracted assets)", () =>
     const merge = tailA.find((blk) => tailB.includes(blk));
     expect(merge).toBe("000002E0");
 
-    // After the merge the two runs are identical to the end of the scene.
+    // After the merge the two runs are identical to the end of the scene,
+    // and both exit to the same next scene. (The final block's label is a
+    // CFG artefact, so only trace equality is asserted.)
     const restA = a.blockTrace.slice(a.blockTrace.indexOf(merge!));
     const restB = b.blockTrace.slice(b.blockTrace.indexOf(merge!));
     expect(restA).toEqual(restB);
-    expect(restA[restA.length - 1]).toBe("0000139A");
+    expect(a.end).toMatchObject({ reason: "gotoScene", nextScene: "S_1A2" });
+    expect(b.end).toMatchObject({ reason: "gotoScene", nextScene: "S_1A2" });
   });
 
   it("answers a second, independent choice by id", () => {

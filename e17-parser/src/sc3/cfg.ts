@@ -6,9 +6,9 @@ export type Edge =
   | {
       type: "condition";
       target: number;
-      /** Raw condition operands of the fe28/fe2d/fe2e guard. */
+      /** The VAR_JUMP (00 0a) instruction whose comparison takes this edge. */
       lhs: Instruction;
-      /** True for the edge taken when the guard executes its protected instruction. */
+      /** True for the edge taken when the comparison holds (jump); false = fallthrough. */
       taken: boolean;
     }
   | { type: "choice"; option: number; target: number }
@@ -30,7 +30,7 @@ export interface Cfg {
   warnings: string[];
 }
 
-const COND_OPS = new Set(["IF_EQ", "IF_2D", "IF_2E"]);
+const COND_OPS = new Set(["VAR_JUMP"]);
 
 function entryTarget(file: Sc3File, index1: number): number | undefined {
   return file.entryPoints[index1 - 1];
@@ -41,9 +41,9 @@ function entryTarget(file: Sc3File, index1: number): number | undefined {
  *
  * Control-flow model (evidence in docs/sc3-format.md):
  *  - JUMP (00 07): unconditional jump to entryPoints[n-1].
- *  - IF_* (fe 28/2d/2e): guards exactly the following instruction; both the
- *    "execute it" and "skip it" paths continue at the instruction after it,
- *    unless the guarded instruction itself branches (JUMP/GOTO_SCRIPT).
+ *  - VAR_JUMP (00 0a): conditional jump to an entry-table target when its
+ *    variable comparison holds; otherwise falls through. (fe 28 is a variable
+ *    WRITE, not a conditional - it never branches.)
  *  - CHOICE_OPTION rows attach choice edges to the block containing the
  *    dispatch; fallthrough continues (the engine idles until selection).
  *  - SWITCH (00 08): edges to each table target.
@@ -94,11 +94,14 @@ export function buildCfg(file: Sc3File, disasm: Disassembly): Cfg {
       const next = instrs[i + 1];
       if (next) leaders.add(next.address);
     } else if (COND_OPS.has(ins.mnemonic)) {
-      // the guarded instruction and the one after it both become leaders
-      const guarded = instrs[i + 1];
-      const after = instrs[i + 2];
-      if (guarded) leaders.add(guarded.address);
-      if (after) leaders.add(after.address);
+      // conditional jump: the target and the fallthrough both become leaders
+      const tgt = ins.operands[2];
+      if (tgt?.kind === "entryRef") {
+        const t = entryTarget(file, tgt.index);
+        if (t !== undefined) leaders.add(t);
+      }
+      const next = instrs[i + 1];
+      if (next) leaders.add(next.address);
     }
   }
 
@@ -173,13 +176,15 @@ export function buildCfg(file: Sc3File, disasm: Disassembly): Cfg {
       continue;
     }
     if (COND_OPS.has(last.mnemonic)) {
-      // block ends with the guard; guarded instruction is the next block
-      if (nextIns) {
-        block.successors.push({ type: "condition", target: nextIns.address, lhs: last, taken: true });
-        const after = instrs[lastIdx + 2];
-        if (after) {
-          block.successors.push({ type: "condition", target: after.address, lhs: last, taken: false });
+      const tgt = last.operands[2];
+      if (tgt?.kind === "entryRef") {
+        const t = entryTarget(file, tgt.index);
+        if (t !== undefined) {
+          block.successors.push({ type: "condition", target: t, lhs: last, taken: true });
         }
+      }
+      if (nextIns) {
+        block.successors.push({ type: "condition", target: nextIns.address, lhs: last, taken: false });
       }
       continue;
     }

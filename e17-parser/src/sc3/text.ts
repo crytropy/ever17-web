@@ -12,6 +12,9 @@ import type { Chunk, RawExpr } from "./types.js";
  *                 | 0x05 <expr>                segment param (observed always [0])
  *                 | 0x0B 0x00 <u16>            choice header: choice id
  *                 | 0x0B 0x01 text... 0x01     choice option text
+ *                 | 0x0B 0x02 <expr> text 0x01 option shown iff the referenced
+ *                                              variable is nonzero (expr is the
+ *                                              lvalue shape 28 0a <var> 14)
  *                 | 0x0A <expr>                option visibility condition
  *                 | 0x01                       line break / name-body separator
  *                 | 0x02                       message end (wait for input)
@@ -29,7 +32,7 @@ export type TextToken =
   | { kind: "segmentParam"; expr: RawExpr }
   | { kind: "choiceHeader"; choiceId: number }
   | { kind: "optionCondition"; expr: RawExpr }
-  | { kind: "optionText"; raw: Buffer; text: string }
+  | { kind: "optionText"; raw: Buffer; text: string; conditionVar?: number }
   | { kind: "text"; raw: Buffer; text: string }
   | { kind: "lineBreak" }
   | { kind: "messageEnd" }
@@ -136,15 +139,38 @@ export function parseTextChunk(
           const id = data.readUInt16LE(p + 2);
           tokens.push({ kind: "choiceHeader", choiceId: id });
           p += 4;
-        } else if (sub === 0x01) {
+        } else if (sub === 0x01 || sub === 0x02) {
           p += 2;
-          // option text runs to the next lone 0x01
+          // 0x02 carries a visibility expression before the text: the option
+          // is offered iff the referenced variable is nonzero (t_1c's
+          // investigation menus init vars 1232.. to 1 and zero them on visit).
+          let conditionVar: number | undefined;
+          if (sub === 0x02) {
+            const r = parseExpr(data, p);
+            p = r.end;
+            const t = r.expr.tokens;
+            if (
+              t.length === 4 &&
+              t[0]!.kind === "op" && t[0]!.op === 0x28 &&
+              t[1]!.kind === "op" && t[1]!.op === 0x0a &&
+              t[2]!.kind === "imm" &&
+              t[3]!.kind === "op" && t[3]!.op === 0x14
+            ) {
+              conditionVar = t[2]!.value;
+            } else {
+              warnings.push("0x0b 0x02 option condition with unrecognised shape");
+            }
+          }
           const start = p;
           while (p < data.length && data[p] !== 0x01) {
             p += data[p]! >= 0x80 ? 2 : 1;
           }
           const raw = data.subarray(start, p);
-          tokens.push({ kind: "optionText", raw, text: decodeDbcs(raw, encoding) });
+          tokens.push(
+            conditionVar === undefined
+              ? { kind: "optionText", raw, text: decodeDbcs(raw, encoding) }
+              : { kind: "optionText", raw, text: decodeDbcs(raw, encoding), conditionVar },
+          );
           if (data[p] === 0x01) p += 1;
           else warnings.push("option text missing 0x01 terminator");
         } else {

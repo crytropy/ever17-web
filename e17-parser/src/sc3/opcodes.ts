@@ -34,11 +34,11 @@ export const OPCODES: ReadonlyMap<string, OpcodeDef> = new Map(
     // ------------------------------------------------------------------ 0x00 class: flow & state
     "0001": def("op_0001", "EEW", "unknown", "startup/system only; args (var-ish, 0, u16)"),
     "0004": def("op_0004", "BEW", "unknown", "startup/system; shape matches 00 0a"),
-    "0005": def("WAIT", "E", "medium", "guarded by fe28 var[171] tests after transitions; arg 1..50 looks like a duration. debug menus use it while idling"),
+    "0005": def("WAIT", "E", "medium", "arg 1..50 looks like a duration; always preceded by a write 171 := <scene-constant> whose meaning is open. debug menus use it while idling"),
     "0006": def("op_0006", "", "unknown", "rare, no operands observed"),
     "0007": def("JUMP", "J", "confirmed", "unconditional jump to entry-table target (1-based). Proven by debug.scr menu loops and s_1a choice merge (entry #3 = 0x2E0)"),
     "0008": def("SWITCH", "EL", "high", "computed jump: selector expression then u16 entry-index table (startup/system). Table length is implicit"),
-    "000a": def("SET_VAR", "BEW", "medium", "story files: byte 01, expr '28 0a <var> 14 <op> <imm> 01', u16. Writes a variable; exact op semantics unproven"),
+    "000a": def("VAR_JUMP", "BEJ", "high", "conditional jump: expr '28 0a <var> 14 <rel> 01 <value> 01' + u16 1-based entry target. rel 0c===, 0d=!= (medium); 0f/10/11 relational thresholds on affection vars (route gates); shape '2d 0a <var> 14' tests a system-space var for nonzero. Proven by s_1a2's head resume dispatch on var 1203 and the skip-if-flag-unset rows before its GOTO SC1A"),
     "000c": def("op_000c", "EEE", "unknown", "three expr operands"),
     "000d": def("SHAKE", "EW", "medium", "debug.scr effect test: paired with the QUA1_CH/CHR_QUA labels; (mode 1, amplitude/duration u16 332/346/194/288)"),
     "000e": def("op_000e", "", "unknown", "system.scr, no operands"),
@@ -50,7 +50,7 @@ export const OPCODES: ReadonlyMap<string, OpcodeDef> = new Map(
     "0015": def("op_0015", "BEEW", "unknown", "system.scr pattern (01, 64, 0, u16)"),
     "0019": def("op_0019", "EE", "unknown", "pairs like (0..2, 1|3|4); channel+mode? very common in startup"),
     "001a": def("CHOICE_END", "", "medium", "appears after choice dispatch regions; closes a 10 1a choice"),
-    "0026": def("CHOICE_COND", "E", "high", "between 10 1a and option rows; expr '28 0a 1203 14' references the selection register as lvalue"),
+    "0026": def("CHOICE_COND", "E", "high", "between 10 1a and option rows; expr '28 0a 1203 14' references the transfer register as lvalue"),
     "0027": def("CHOICE_OPTION", "EJ", "confirmed", "registers option <expr index> -> entry-table target (1-based). Proven by debug.scr menu tree + s_1a choice (targets 0x29D/0x2B1)"),
     "0028": def("op_0028", "", "unknown", "0-arg; near script heads after route-flag conditionals"),
     // ------------------------------------------------------------------ 0x01 class (system only)
@@ -102,9 +102,9 @@ export const OPCODES: ReadonlyMap<string, OpcodeDef> = new Map(
     "1045": def("TRANSITION_TIME", "EE", "medium", "(frames 0/3/6/12/18/24, mode 0|1) before staged transitions"),
     "1046": def("op_1046", "E", "unknown", "(0|1|2) right after SCENE_MARKER at script heads"),
     // ------------------------------------------------------------------ 0xFE class: conditionals
-    "fe28": def("IF_EQ", "EE", "high", "compare lhs expr (usually 'var <id> 14 14') with rhs expr; conditionally executes exactly the next instruction. Polarity (eq vs ne) unproven"),
-    "fe2d": def("IF_2D", "EE", "medium", "conditional variant; lhs ops often '14 17/18/20' - likely other comparison operators"),
-    "fe2e": def("IF_2E", "EE", "low", "conditional variant (startup/system)"),
+    "fe28": def("VAR_SET", "EE", "high", "variable write, not a conditional: lhs '0a <var> 14 <mod>' + value expr. mod 14 = assign (:=), mod 17 = modify (observed only on affection vars 1206-1215; likely +=). Proven by scene-head date init (1200:=5, 1201/1202:=day matching every scene name), sc1a writing resume index 1203:=1/2 before GOTO S_1A2, and the debug menu's 全選択肢ON/OFF options writing 1053:=1/0"),
+    "fe2d": def("VAR_SET_2D", "EE", "low", "VAR_SET family variant (startup/system only; absent from story scripts); lhs mods 17/18/20 unidentified"),
+    "fe2e": def("VAR_SET_2E", "EE", "low", "VAR_SET family variant (startup/system only)"),
     // ------------------------------------------------------------------ 0x80 class (system only)
     "8013": def("op_8013", "W", "unknown", "startup/system"),
     "8018": def("op_8018", "BWW", "unknown", "startup/system; (slot byte, u16, u16) - UI widget positioning?"),

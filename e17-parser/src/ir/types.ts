@@ -4,8 +4,21 @@
  * not yet understood is preserved as explicit `unknown` ops.
  */
 
+/** Comparison in a VAR_JUMP row. Relations 0x0c (eq) and 0x0d (ne) are the
+ * common ones; 0x0f/0x10/0x11 are the rare relational route gates. */
 export type IrCondition =
-  | { type: "varTest"; varId: number; ops: number[]; rhs: IrValue; opcode: string }
+  | {
+      type: "varCompare";
+      varId: number;
+      /** relation byte from the expression (0x0c, 0x0d, 0x0f, 0x10, 0x11) */
+      rel: number;
+      value: IrValue;
+    }
+  | {
+      /** '2d 0a <var> 14' shape: tests a system-space variable (no value). */
+      type: "sysVarTest";
+      varId: number;
+    }
   | { type: "unknownExpr"; raw: string };
 
 export type IrValue =
@@ -56,15 +69,20 @@ export type IrOp =
   | { op: "gotoBlock"; target: string }
   | { op: "gotoScene"; scene: string }
   | {
-      op: "branch";
+      /** Variable write (fe 28): mod 0x14 = assign, 0x17 = modify (likely +=). */
+      op: "varSet";
+      varId: number;
+      mod: number;
+      value: IrValue;
+    }
+  | {
+      /** Conditional jump (00 0a): when the condition holds, control moves to target. */
+      op: "varJump";
       condition: IrCondition;
-      /** Block executed when the guard fires (single guarded instruction). */
-      takenTarget: string;
-      skipTarget: string | null;
+      target: string;
     }
   | { op: "switch"; selector: IrValue; targets: string[] }
   | { op: "savePoint"; id: string }
-  | { op: "setVar"; raw: string }
   | { op: "unknown"; opcode: string; mnemonic: string; raw: string; operands: string[] };
 
 export interface IrBlock {

@@ -3,10 +3,46 @@
  * runtime consumes: the IR JSON emitted by e17-parser and the asset manifest
  * emitted by e17-assets. Nothing here knows about SC3, LNK, CPS or WAF.
  */
-import type { IrScene, IrOp, IrBlock, IrCondition } from "e17-parser";
-import type { AssetManifest, ManifestEntry } from "e17-assets";
+import type { IrScene, IrOp, IrBlock, IrCondition } from "e17-parser/ir";
 
-export type { IrScene, IrOp, IrBlock, IrCondition, AssetManifest, ManifestEntry };
+export type { IrScene, IrOp, IrBlock, IrCondition };
+
+/**
+ * The manifest contract emitted by e17-assets (manifest.json). Declared here
+ * rather than imported so the runtime - including its browser build - depends
+ * only on the JSON shapes, never on the decoder packages.
+ */
+export interface ManifestEntry {
+  name: string;
+  kind: "image" | "audio";
+  archive: string;
+  /** Path of the converted file, relative to the manifest. */
+  file: string;
+  width?: number;
+  height?: number;
+  hasAlpha?: boolean;
+  baseLeftOffset?: number;
+  channels?: number;
+  sampleRate?: number;
+  duration?: number;
+}
+
+export interface AssetManifest {
+  assets: Record<string, ManifestEntry>;
+  missing: string[];
+  generatedFrom: string[];
+}
+
+/**
+ * The minimal, environment-agnostic view of an extracted asset set that the
+ * VM needs. Implemented by AssetResolver (Node) and by the web client
+ * (fetch-based); keeping the VM against this interface keeps it browser-safe.
+ */
+export interface AssetIndex {
+  get(name: string | null | undefined): ManifestEntry | undefined;
+  /** Manifest-relative path of the converted file, or null. */
+  relative(name: string | null | undefined): string | null;
+}
 
 /** A resolved on-screen background or sprite. */
 export interface LayerState {
