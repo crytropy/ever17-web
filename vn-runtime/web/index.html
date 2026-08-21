@@ -10,10 +10,8 @@
   #wrap { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
   #stage { position:relative; width:800px; height:600px; overflow:hidden; background:#000;
            transform-origin:center; }
-  #bg, #fill, .sprite, #movie { position:absolute; }
-  #bg { left:0; bottom:0; }
-  #fill { inset:0; }
-  .sprite { bottom:0; }
+  #pixi-parent, #movie { position:absolute; inset:0; }
+  #pixi-parent canvas { display:block; }
   #movie { inset:0; width:100%; height:100%; background:#000; object-fit:contain; }
   #textbox {
     position:absolute; left:20px; right:20px; bottom:16px; min-height:110px;
@@ -61,9 +59,7 @@
 <body>
 <div id="wrap">
   <div id="stage">
-    <img id="bg" alt="">
-    <div id="fill"></div>
-    <div id="sprites"></div>
+    <div id="pixi-parent"></div>
     <video id="movie" class="hidden" playsinline></video>
     <div id="textbox"><div id="speaker"></div><div id="text"></div><div id="more">▼</div></div>
     <div id="choices" class="hidden"></div>

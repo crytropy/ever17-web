@@ -11,7 +11,8 @@
  * runtime's save/resume tests).
  */
 import { GameSession, SAVE_FORMAT, type AsyncSceneSource, type SessionEvent, type SessionSave } from "../game-session.js";
-import type { AssetIndex, AssetManifest, ManifestEntry, SceneStateSnapshot } from "../types.js";
+import type { AssetIndex, AssetManifest, ManifestEntry } from "../types.js";
+import { PixiStage } from "./stage.js";
 
 declare global {
   interface Window {
@@ -21,9 +22,7 @@ declare global {
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 const stage = $("stage");
-const bgEl = $<HTMLImageElement>("bg");
-const fillEl = $("fill");
-const spritesEl = $("sprites");
+const pixiParent = $("pixi-parent");
 const speakerEl = $("speaker");
 const textEl = $("text");
 const textboxEl = $("textbox");
@@ -121,47 +120,13 @@ class AudioBox {
   }
 }
 
-// ---------------------------------------------------------------- rendering
-function renderState(state: SceneStateSnapshot, assetsBase: string): void {
-  if (state.background?.file) {
-    const url = `${assetsBase}/${state.background.file}`;
-    if (bgEl.dataset["url"] !== url) {
-      bgEl.src = url;
-      bgEl.dataset["url"] = url;
-    }
-    bgEl.classList.remove("hidden");
-    fillEl.style.background = "transparent";
-  } else {
-    bgEl.classList.add("hidden");
-    bgEl.dataset["url"] = "";
-    fillEl.style.background = state.fill === 1 ? "#fff" : "#000";
-  }
-  const want = new Map(state.sprites.filter((s) => s.file).map((s) => [`s${s.slot}`, s]));
-  for (const el of [...spritesEl.children] as HTMLImageElement[]) {
-    if (!want.has(el.id)) el.remove();
-  }
-  for (const [id, sprite] of want) {
-    let el = document.getElementById(id) as HTMLImageElement | null;
-    if (!el) {
-      el = document.createElement("img");
-      el.id = id;
-      el.className = "sprite";
-      spritesEl.appendChild(el);
-    }
-    const url = `${assetsBase}/${sprite.file}`;
-    if (el.dataset["url"] !== url) {
-      el.src = url;
-      el.dataset["url"] = url;
-    }
-    el.style.left = `${sprite.x ?? 0}px`;
-  }
-}
 
 // ---------------------------------------------------------------- player
 const SAVE_KEY = "e17vn:slot0";
 
 class WebPlayer {
   private session: GameSession | null = null;
+  private stage: PixiStage | null = null;
   private source!: WebSceneSource;
   private assets!: WebAssets;
   private readonly audio = new AudioBox();
@@ -285,6 +250,7 @@ class WebPlayer {
 
   // ------------------------------------------------ core loop
   private advance(): void {
+    this.stage?.skip();
     const w = this.clickWaiter;
     this.clickWaiter = null;
     w?.();
@@ -358,11 +324,15 @@ class WebPlayer {
         const ev: SessionEvent = await session.next();
         await this.flushOps();
         if (ev.type === "dialogue") {
-          renderState(ev.state, this.assetsBase);
           this.audio.setBgm(
             ev.state.bgm,
             ev.state.bgm ? `${this.assetsBase}/${this.assets.relative(ev.state.bgm) ?? ""}` : null,
           );
+          // play the transition script, then show the line
+          await this.stage?.apply(ev.state, ev.actions, (f) => `${this.assetsBase}/${f}`, {
+            instant: this.skip,
+          });
+          if (this.session !== session) return;
           speakerEl.textContent = ev.speaker ?? "";
           textEl.textContent = ev.text;
           if (!this.skip) {
@@ -375,7 +345,10 @@ class WebPlayer {
         }
         if (ev.type === "choice") {
           this.cancelAuto();
-          renderState(ev.state, this.assetsBase);
+          await this.stage?.apply(ev.state, ev.actions, (f) => `${this.assetsBase}/${f}`, {
+            instant: this.skip,
+          });
+          if (this.session !== session) return;
           this.hud();
           const option = await this.showChoice(ev);
           if (this.session !== session) return;
@@ -419,6 +392,7 @@ class WebPlayer {
     const manifest = (await (await fetch(`${this.assetsBase}/manifest.json`)).json()) as AssetManifest;
     this.assets = new WebAssets(manifest);
     this.source = new WebSceneSource(this.assets);
+    this.stage = await PixiStage.create(pixiParent);
     const params = new URLSearchParams(location.search);
     const start = params.get("start") ?? "op00";
     await new Promise<void>((resolve) => {

@@ -1,0 +1,382 @@
+[
+ {
+  "name": "bg-only",
+  "state": {
+   "background": {
+    "asset": "BG38A2",
+    "file": "images/bg38a2.png",
+    "width": 800,
+    "height": 600,
+    "x": null,
+    "slot": null
+   },
+   "sprites": [],
+   "fill": null
+  },
+  "actions": [
+   {
+    "kind": "transitionSync"
+   },
+   {
+    "kind": "transitionTime",
+    "frames": 12,
+    "mode": 0
+   },
+   {
+    "kind": "effectOff",
+    "category": 7
+   },
+   {
+    "kind": "effectOff",
+    "category": 11
+   },
+   {
+    "kind": "fillScreen",
+    "color": 0,
+    "fade": 6
+   },
+   {
+    "kind": "wait",
+    "amount": 3,
+    "unit": "vm"
+   },
+   {
+    "kind": "setBackground",
+    "layer": {
+     "asset": "BG38A2",
+     "file": "images/bg38a2.png",
+     "width": 800,
+     "height": 600,
+     "x": null,
+     "slot": null
+    },
+    "fade": 0
+   }
+  ]
+ },
+ {
+  "name": "bg-sprite",
+  "state": {
+   "background": {
+    "asset": "BG21A4",
+    "file": "images/bg21a4.png",
+    "width": 800,
+    "height": 600,
+    "x": null,
+    "slot": null
+   },
+   "sprites": [
+    {
+     "asset": "YU02BDM",
+     "file": "images/yu02bdm.png",
+     "width": 412,
+     "height": 535,
+     "x": 214,
+     "slot": 1
+    }
+   ],
+   "fill": null
+  },
+  "actions": [
+   {
+    "kind": "transitionSync"
+   },
+   {
+    "kind": "showSprite",
+    "layer": {
+     "asset": "YU02BDM",
+     "file": "images/yu02bdm.png",
+     "width": 412,
+     "height": 535,
+     "x": 214,
+     "slot": 1
+    },
+    "mode": 3
+   }
+  ]
+ },
+ {
+  "name": "cg-effect",
+  "state": {
+   "background": null,
+   "sprites": [],
+   "fill": 1
+  },
+  "actions": [
+   {
+    "kind": "transitionSync"
+   },
+   {
+    "kind": "transitionTime",
+    "frames": 0,
+    "mode": 1
+   },
+   {
+    "kind": "cgEffect",
+    "asset": "BG41A1",
+    "file": "images/bg41a1.png",
+    "args": [
+     6,
+     2,
+     12,
+     12,
+     775,
+     581
+    ]
+   },
+   {
+    "kind": "effectOn",
+    "effect": 27
+   },
+   {
+    "kind": "effectOn",
+    "effect": 12
+   },
+   {
+    "kind": "wait",
+    "amount": 48,
+    "unit": "vm"
+   }
+  ]
+ },
+ {
+  "name": "crossfade-bg",
+  "state": {
+   "background": {
+    "asset": "EV_TU14E",
+    "file": "images/ev_tu14e.png",
+    "width": 800,
+    "height": 600,
+    "x": null,
+    "slot": null
+   },
+   "sprites": [],
+   "fill": null
+  },
+  "actions": [
+   {
+    "kind": "transitionSync"
+   },
+   {
+    "kind": "effectOff",
+    "category": 16
+   },
+   {
+    "kind": "transitionTime",
+    "frames": 12,
+    "mode": 1
+   },
+   {
+    "kind": "effectOff",
+    "category": 14
+   },
+   {
+    "kind": "setBackground",
+    "layer": {
+     "asset": "EV_TU14E",
+     "file": "images/ev_tu14e.png",
+     "width": 800,
+     "height": 600,
+     "x": null,
+     "slot": null
+    },
+    "fade": 6
+   },
+   {
+    "kind": "wait",
+    "amount": 48,
+    "unit": "vm"
+   }
+  ]
+ },
+ {
+  "name": "effect-active",
+  "state": {
+   "background": null,
+   "sprites": [],
+   "fill": 1
+  },
+  "actions": [
+   {
+    "kind": "transitionSync"
+   },
+   {
+    "kind": "transitionTime",
+    "frames": 0,
+    "mode": 1
+   },
+   {
+    "kind": "cgEffect",
+    "asset": "BG41A1",
+    "file": "images/bg41a1.png",
+    "args": [
+     6,
+     2,
+     12,
+     12,
+     775,
+     581
+    ]
+   },
+   {
+    "kind": "effectOn",
+    "effect": 27
+   },
+   {
+    "kind": "effectOn",
+    "effect": 12
+   },
+   {
+    "kind": "wait",
+    "amount": 48,
+    "unit": "vm"
+   }
+  ]
+ },
+ {
+  "name": "fill-screen",
+  "state": {
+   "background": null,
+   "sprites": [],
+   "fill": 1
+  },
+  "actions": [
+   {
+    "kind": "wait",
+    "amount": 120,
+    "unit": "frames"
+   },
+   {
+    "kind": "fillScreen",
+    "color": 1,
+    "fade": 0
+   },
+   {
+    "kind": "wait",
+    "amount": 119,
+    "unit": "frames"
+   }
+  ]
+ },
+ {
+  "name": "two-sprites",
+  "state": {
+   "background": {
+    "asset": "BG39A2",
+    "file": "images/bg39a2.png",
+    "width": 800,
+    "height": 600,
+    "x": null,
+    "slot": null
+   },
+   "sprites": [
+    {
+     "asset": "MY19ADS",
+     "file": "images/my19ads.png",
+     "width": 408,
+     "height": 582,
+     "x": 54,
+     "slot": 1
+    },
+    {
+     "asset": "CO11ADS",
+     "file": "images/co11ads.png",
+     "width": 270,
+     "height": 427,
+     "x": 449,
+     "slot": 2
+    }
+   ],
+   "fill": null
+  },
+  "actions": [
+   {
+    "kind": "transitionSync"
+   },
+   {
+    "kind": "transitionTime",
+    "frames": 18,
+    "mode": 0
+   },
+   {
+    "kind": "hideSprite",
+    "slot": 1,
+    "mode": 3
+   },
+   {
+    "kind": "fillScreen",
+    "color": 0,
+    "fade": 6
+   },
+   {
+    "kind": "wait",
+    "amount": 3,
+    "unit": "vm"
+   },
+   {
+    "kind": "effectOn",
+    "effect": 47
+   },
+   {
+    "kind": "wait",
+    "amount": 30,
+    "unit": "vm"
+   },
+   {
+    "kind": "transitionTime",
+    "frames": 3,
+    "mode": 1
+   },
+   {
+    "kind": "fillScreen",
+    "color": 1,
+    "fade": 6
+   },
+   {
+    "kind": "wait",
+    "amount": 3,
+    "unit": "vm"
+   },
+   {
+    "kind": "setBackground",
+    "layer": {
+     "asset": "BG39A2",
+     "file": "images/bg39a2.png",
+     "width": 800,
+     "height": 600,
+     "x": null,
+     "slot": null
+    },
+    "fade": 0
+   },
+   {
+    "kind": "effectOn",
+    "effect": 27
+   },
+   {
+    "kind": "showSprite",
+    "layer": {
+     "asset": "MY19ADS",
+     "file": "images/my19ads.png",
+     "width": 408,
+     "height": 582,
+     "x": 54,
+     "slot": 1
+    },
+    "mode": 3
+   },
+   {
+    "kind": "showSprite",
+    "layer": {
+     "asset": "CO11ADS",
+     "file": "images/co11ads.png",
+     "width": 270,
+     "height": 427,
+     "x": 449,
+     "slot": 2
+    },
+    "mode": 3
+   }
+  ]
+ }
+]

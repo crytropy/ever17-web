@@ -42,6 +42,9 @@ export function collectSceneAssets(scene: IrScene): AssetRef[] {
         case "playSE":
           add(op.asset, "audio", "playSE");
           break;
+        case "cgEffect":
+          add(op.asset, "image", "cgEffect");
+          break;
         case "playBGM":
           if (op.track !== null) add(bgmAssetName(op.track), "audio", "playBGM");
           break;

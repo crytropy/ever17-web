@@ -20,12 +20,15 @@ function fp(ev: SessionEvent): unknown {
         sprites: ev.state.sprites.map((s) => [s.asset, s.slot, s.x]),
         bgm: ev.state.bgm,
         fill: ev.state.fill,
+        // presentation deltas are part of the identity contract
+        actions: ev.actions,
       };
     case "choice":
       return {
         t: "c",
         id: ev.id,
         options: ev.options.map((o) => [o.index, o.text, o.target, o.enabled]),
+        actions: ev.actions,
       };
     case "sessionEnd":
       return { t: "e", reason: ev.reason, scene: ev.scene };

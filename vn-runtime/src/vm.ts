@@ -7,6 +7,7 @@ import type {
   IrScene,
   LayerState,
   PlayerEvent,
+  PresentationAction,
   SceneState,
   SceneStateSnapshot,
 } from "./types.js";
@@ -78,6 +79,8 @@ export interface VmSaveState {
     bgm: string | null;
     fill: number | null;
   };
+  /** Presentation deltas of the presented event (re-attached on resume). */
+  actions?: PresentationAction[];
 }
 
 /**
@@ -128,6 +131,7 @@ export class SceneVm {
         bgm: resume.presentation.bgm,
         fill: resume.presentation.fill,
       };
+      this.resumeActions = (resume.actions ?? []).map((a) => ({ ...a }));
     } else {
       this.block = scene.entry;
       if (!scene.blocks[this.block]) {
@@ -141,6 +145,12 @@ export class SceneVm {
 
   /** (block, pc) of the op that produced the last yielded dialogue/choice. */
   private eventPoint: { block: string; pc: number } | null = null;
+  /** Presentation deltas accumulated since the last yielded event. */
+  private actions: PresentationAction[] = [];
+  /** Actions to re-deliver with the first event after a resume. */
+  private resumeActions: PresentationAction[] | null = null;
+  /** Actions delivered with the currently presented event (for saves). */
+  private presentedActions: PresentationAction[] = [];
 
   /**
    * Snapshot for save files. Valid while an event is being presented; before
@@ -159,6 +169,7 @@ export class SceneVm {
         bgm: this.state.bgm,
         fill: this.state.fill,
       },
+      actions: this.presentedActions.map((a) => ({ ...a })),
     };
   }
 
@@ -168,6 +179,21 @@ export class SceneVm {
 
   get done(): boolean {
     return this.finished;
+  }
+
+  /** Hand the accumulated deltas to the event being yielded. */
+  private takeActions(): PresentationAction[] {
+    if (this.resumeActions) {
+      const a = this.resumeActions;
+      this.resumeActions = null;
+      this.actions = [];
+      this.presentedActions = a;
+      return a.map((x) => ({ ...x }));
+    }
+    const a = this.actions;
+    this.actions = [];
+    this.presentedActions = a;
+    return a.map((x) => ({ ...x }));
   }
 
   private snapshot(): SceneStateSnapshot {
@@ -251,6 +277,7 @@ export class SceneVm {
             voice: op.voice,
             voiceFile: this.assets.relative(op.voice),
             state: this.snapshot(),
+            actions: this.takeActions(),
           };
         }
 
@@ -281,12 +308,19 @@ export class SceneVm {
             resultVar: op.resultVar,
             options,
             state: this.snapshot(),
+            actions: this.takeActions(),
           };
         }
 
         case "setBackground": {
           this.state.background = this.layerFor(op.asset, null, null);
           this.state.fill = null;
+          this.actions.push({
+            kind: "setBackground",
+            layer: { ...this.state.background },
+            fade: op.fade,
+            ...(op.variant !== undefined ? { variant: op.variant } : {}),
+          });
           break;
         }
 
@@ -294,19 +328,24 @@ export class SceneVm {
           this.state.fill = op.color;
           this.state.background = null;
           this.state.sprites.clear();
+          this.actions.push({ kind: "fillScreen", color: op.color, fade: op.fade });
           break;
         }
 
         case "showSprite": {
           const slot = op.slot ?? 1;
-          this.state.sprites.set(slot, this.layerFor(op.asset, slot, op.x));
+          const layer = this.layerFor(op.asset, slot, op.x);
+          this.state.sprites.set(slot, layer);
+          this.actions.push({ kind: "showSprite", layer: { ...layer }, mode: op.mode });
           break;
         }
 
         case "showSprites": {
           op.sprites.forEach((s, i) => {
             const slot = i + 1;
-            this.state.sprites.set(slot, this.layerFor(s.asset, slot, s.x));
+            const layer = this.layerFor(s.asset, slot, s.x);
+            this.state.sprites.set(slot, layer);
+            this.actions.push({ kind: "showSprite", layer: { ...layer }, mode: op.mode });
           });
           break;
         }
@@ -314,6 +353,7 @@ export class SceneVm {
         case "hideSprite": {
           if (op.slot == null) this.state.sprites.clear();
           else this.state.sprites.delete(op.slot);
+          this.actions.push({ kind: "hideSprite", slot: op.slot, mode: op.mode });
           break;
         }
 
@@ -328,6 +368,44 @@ export class SceneVm {
           this.opts.onOp?.(op, this.block);
           break;
         }
+
+        case "transitionSync":
+          this.actions.push({ kind: "transitionSync" });
+          break;
+        case "transitionTime":
+          this.actions.push({ kind: "transitionTime", frames: op.frames, mode: op.mode });
+          break;
+        case "effectOn":
+          this.actions.push({ kind: "effectOn", effect: op.effect });
+          break;
+        case "effectOff":
+          this.actions.push({ kind: "effectOff", category: op.category });
+          break;
+        case "shake":
+          this.actions.push({ kind: "shake", mode: op.mode, amplitude: op.amplitude });
+          break;
+        case "spriteOrder":
+          this.actions.push({ kind: "spriteOrder", order: [...op.order] });
+          break;
+        case "viewportRect":
+          this.actions.push({ kind: "viewportRect", x: op.x, y: op.y, w: op.w, h: op.h, frames: op.frames });
+          break;
+        case "cgEffect":
+          this.actions.push({
+            kind: "cgEffect",
+            asset: op.asset,
+            file: this.assets.relative(op.asset),
+            args: [...op.args],
+          });
+          break;
+        case "wait":
+          this.actions.push({ kind: "wait", amount: op.amount, unit: "vm" });
+          this.opts.onOp?.(op, this.block);
+          break;
+        case "waitFrames":
+          this.actions.push({ kind: "wait", amount: op.frames, unit: "frames" });
+          this.opts.onOp?.(op, this.block);
+          break;
 
         case "gotoBlock": {
           if (!this.goto(op.target)) {

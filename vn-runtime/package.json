@@ -14,7 +14,8 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.web.json"
   },
   "dependencies": {
+    "e17-assets": "*",
     "e17-parser": "*",
-    "e17-assets": "*"
+    "pixi.js": "^8.20.0"
   }
 }

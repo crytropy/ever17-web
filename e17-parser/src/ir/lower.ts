@@ -371,6 +371,40 @@ function lowerInstruction(
       return [{ op: "waitFrames", frames: operandImm(ops[0]) }];
     case "SAVE_POINT":
       return [{ op: "savePoint", id: ops[0]?.kind === "string" ? ops[0].value : "?" }];
+    case "TRANSITION_SYNC":
+      return [{ op: "transitionSync" }];
+    case "TRANSITION_TIME":
+      return [{ op: "transitionTime", frames: operandImm(ops[0]), mode: operandImm(ops[1]) }];
+    case "EFFECT_ON":
+      return [{ op: "effectOn", effect: operandImm(ops[0]) }];
+    case "EFFECT_OFF":
+      return [{ op: "effectOff", category: operandImm(ops[0]) }];
+    case "SHAKE":
+      return [{ op: "shake", mode: operandImm(ops[0]), amplitude: operandU16(ops[1]) }];
+    case "SPRITE_ORDER":
+      return [{ op: "spriteOrder", order: [operandImm(ops[0]), operandImm(ops[1]), operandImm(ops[2])] }];
+    case "VIEWPORT_RECT":
+      return [
+        {
+          op: "viewportRect",
+          x: operandImm(ops[0]),
+          y: operandImm(ops[1]),
+          w: operandImm(ops[2]),
+          h: operandImm(ops[3]),
+          frames: operandImm(ops[4]),
+        },
+      ];
+    case "CG_EFFECT": {
+      const resource = operandU16(ops[1]) ?? -1;
+      return [
+        {
+          op: "cgEffect",
+          asset: resourceName(file, resource),
+          resource,
+          args: [2, 3, 4, 5, 6, 7].map((i) => operandImm(ops[i])),
+        },
+      ];
+    }
     case "VAR_SET": {
       const parsed = parseVarSet(ins);
       if (!parsed) {

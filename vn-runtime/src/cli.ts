@@ -19,6 +19,10 @@ usage:
   vn route <irDir> [manifest.json] [options]        chain scenes from --start to an ending;
                                                     reports route, gaps, unknown semantics
   vn serve <irDir> <assetsDir> [--port n]           bundle + serve the browser client
+                                                    (also serves /shots.html, the visual-
+                                                    regression harness)
+  vn fixtures <irDir> <manifest.json> -o <out.json> capture representative presentation
+                                                    fixtures from a headless playthrough
 
 options:
   --choice <id>=<option>   answer the choice with that id (repeatable)
@@ -83,7 +87,7 @@ for (let i = 0; i < argv.length; i++) {
 
 const [cmd, scenePath, manifestPath] = positional;
 if (!cmd || !scenePath) usage();
-if (cmd !== "route" && !manifestPath) usage();
+if (cmd !== "route" && cmd !== "fixtures" && !manifestPath) usage();
 
 function describeState(ev: Extract<PlayerEvent, { type: "dialogue" | "choice" }>): string {
   const bg = ev.state.background?.asset ?? (ev.state.fill != null ? `fill:${ev.state.fill}` : "-");
@@ -97,6 +101,19 @@ if (cmd === "serve") {
   if (!assetsDir) usage();
   const { serve } = await import("./serve.js");
   serve({ irDir, assetsDir, port });
+} else if (cmd === "fixtures") {
+  const irDir = scenePath;
+  const manifest = manifestPath;
+  if (!manifest || !outPath) usage();
+  const { captureFixtures } = await import("./fixtures.js");
+  const fixtures = await captureFixtures(irDir, manifest, startScene);
+  writeFileSync(outPath, JSON.stringify(fixtures, null, 1));
+  console.log(`${fixtures.length} fixtures -> ${outPath}`);
+  for (const f of fixtures) {
+    console.log(
+      `  ${f.name.padEnd(14)} bg=${f.state.background?.asset ?? "-"} sprites=${f.state.sprites.length} actions=${f.actions.length}`,
+    );
+  }
 } else if (cmd === "route") {
   const source = fsSceneSource(scenePath, manifestPath);
   const runner = new SessionRunner(source, {
@@ -134,8 +151,8 @@ if (cmd === "serve") {
   process.exit(r.end === "ending" ? 0 : 1);
 }
 
-if (cmd === "serve") {
-  // server keeps running; nothing below applies
+if (cmd === "serve" || cmd === "fixtures" || cmd === "route") {
+  // handled above; the single-scene commands below do not apply
 } else {
 const scene = JSON.parse(readFileSync(scenePath, "utf8")) as IrScene;
 const assets = new AssetResolver(manifestPath!);

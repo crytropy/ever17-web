@@ -83,6 +83,19 @@ export type IrOp =
     }
   | { op: "switch"; selector: IrValue; targets: string[] }
   | { op: "savePoint"; id: string }
+  | { op: "transitionSync" }
+  | { op: "transitionTime"; frames: number | null; mode: number | null }
+  | { op: "effectOn"; effect: number | null }
+  | { op: "effectOff"; category: number | null }
+  | { op: "shake"; mode: number | null; amplitude: number | null }
+  | { op: "spriteOrder"; order: (number | null)[] }
+  | { op: "viewportRect"; x: number | null; y: number | null; w: number | null; h: number | null; frames: number | null }
+  | {
+      op: "cgEffect";
+      asset: string | null;
+      resource: number;
+      args: (number | null)[];
+    }
   | { op: "unknown"; opcode: string; mnemonic: string; raw: string; operands: string[] };
 
 export interface IrBlock {

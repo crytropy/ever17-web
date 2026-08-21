@@ -44,6 +44,28 @@ export interface AssetIndex {
   relative(name: string | null | undefined): string | null;
 }
 
+/**
+ * Presentation delta accumulated between two presented events. The renderer
+ * consumes these as the transition script and `SceneStateSnapshot` as the
+ * truth to settle on (skipping = jump straight to the state). Pure data:
+ * JSON-safe, environment-agnostic, and included in saves so a restored
+ * session re-presents its moment with identical actions.
+ */
+export type PresentationAction =
+  | { kind: "setBackground"; layer: LayerState; fade: number | null; variant?: string }
+  | { kind: "fillScreen"; color: number | null; fade: number | null }
+  | { kind: "showSprite"; layer: LayerState; mode: number | null }
+  | { kind: "hideSprite"; slot: number | null; mode: number | null }
+  | { kind: "spriteOrder"; order: (number | null)[] }
+  | { kind: "transitionTime"; frames: number | null; mode: number | null }
+  | { kind: "transitionSync" }
+  | { kind: "wait"; amount: number | null; unit: "vm" | "frames" }
+  | { kind: "effectOn"; effect: number | null }
+  | { kind: "effectOff"; category: number | null }
+  | { kind: "shake"; mode: number | null; amplitude: number | null }
+  | { kind: "viewportRect"; x: number | null; y: number | null; w: number | null; h: number | null; frames: number | null }
+  | { kind: "cgEffect"; asset: string | null; file: string | null; args: (number | null)[] };
+
 /** A resolved on-screen background or sprite. */
 export interface LayerState {
   /** Logical asset name from the scenario. */
@@ -73,6 +95,8 @@ export interface DialogueEvent {
   voice: string | null;
   voiceFile: string | null;
   state: SceneStateSnapshot;
+  /** Presentation deltas since the previous event, in execution order. */
+  actions: PresentationAction[];
 }
 
 export interface ChoiceOptionView {
@@ -88,6 +112,8 @@ export interface ChoiceEvent {
   resultVar: number | null;
   options: ChoiceOptionView[];
   state: SceneStateSnapshot;
+  /** Presentation deltas since the previous event, in execution order. */
+  actions: PresentationAction[];
 }
 
 export interface SceneEndEvent {

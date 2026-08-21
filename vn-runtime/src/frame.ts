@@ -11,13 +11,13 @@ import { SCREEN_H, SCREEN_W } from "./vm.js";
  * up geometrically - it is deliberately not a UI.
  */
 
-interface Raster {
+export interface Raster {
   width: number;
   height: number;
   rgba: Buffer;
 }
 
-function decodePng(buf: Buffer): Raster {
+export function decodePng(buf: Buffer): Raster {
   if (buf.readUInt32BE(0) !== 0x89504e47) throw new Error("not a PNG");
   let pos = 8;
   let width = 0;

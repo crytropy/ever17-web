@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { extname, join, normalize, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { basename, extname, join, normalize, resolve } from "node:path";
 import { buildSync } from "esbuild";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
@@ -19,6 +19,10 @@ export interface ServeOptions {
   irDir: string;
   assetsDir: string;
   port?: number;
+  /** Fixture list served to the /shots.html harness. */
+  fixturesPath?: string;
+  /** Where the harness's POSTed PNGs are written. */
+  shotsOutDir?: string;
 }
 
 /**
@@ -28,9 +32,9 @@ export interface ServeOptions {
 export function serve(opts: ServeOptions): void {
   const webDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "web");
   const bundlePath = join(webDir, "bundle.js");
-  const entry = resolve(dirname(fileURLToPath(import.meta.url)), "web", "main.ts");
+  const webSrc = resolve(dirname(fileURLToPath(import.meta.url)), "web");
   buildSync({
-    entryPoints: [entry],
+    entryPoints: [join(webSrc, "main.ts")],
     bundle: true,
     outfile: bundlePath,
     format: "iife",
@@ -38,15 +42,57 @@ export function serve(opts: ServeOptions): void {
     sourcemap: "inline",
     logLevel: "warning",
   });
-  console.log(`bundled web client -> ${bundlePath}`);
+  buildSync({
+    entryPoints: [join(webSrc, "shots.ts")],
+    bundle: true,
+    outfile: join(webDir, "shots-bundle.js"),
+    format: "iife",
+    target: "es2022",
+    logLevel: "warning",
+  });
+  console.log(`bundled web client + shots harness -> ${webDir}`);
 
   const roots: Record<string, string> = {
     "/ir": resolve(opts.irDir),
     "/assets": resolve(opts.assetsDir),
   };
 
+  const fixturesPath = opts.fixturesPath ?? resolve("vn-runtime", "test", "__shots__", "fixtures.json");
+  const shotsOutDir = opts.shotsOutDir ?? resolve("build", "shots", "current");
+
   const server = createServer((req, res) => {
     const url = (req.url ?? "/").split("?")[0]!;
+
+    // ------------- visual-regression harness endpoints
+    if (url === "/shots/fixtures.json") {
+      if (!existsSync(fixturesPath)) {
+        res.writeHead(404, { "content-type": "text/plain" });
+        res.end(`no fixtures at ${fixturesPath} - run: vn fixtures <irDir> <manifest> -o ${fixturesPath}`);
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(readFileSync(fixturesPath));
+      return;
+    }
+    if (req.method === "POST" && url.startsWith("/shots/save/")) {
+      const name = basename(decodeURIComponent(url.slice("/shots/save/".length))).replace(/[^a-z0-9_-]/gi, "");
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        const dataUrl = Buffer.concat(chunks).toString("utf8");
+        const m = dataUrl.match(/^data:image\/png;base64,(.+)$/s);
+        if (!name || !m) {
+          res.writeHead(400).end("expected a png data url");
+          return;
+        }
+        mkdirSync(shotsOutDir, { recursive: true });
+        const out = join(shotsOutDir, `${name}.png`);
+        writeFileSync(out, Buffer.from(m[1]!, "base64"));
+        console.log(`shot saved: ${out}`);
+        res.writeHead(200).end("ok");
+      });
+      return;
+    }
     let filePath: string | null = null;
     for (const [prefix, root] of Object.entries(roots)) {
       if (url.startsWith(prefix + "/")) {
