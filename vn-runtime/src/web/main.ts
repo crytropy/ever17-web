@@ -1,25 +1,21 @@
 /**
- * Minimal playable browser client over the vn-runtime core.
+ * Minimal playable browser client over the vn-runtime GameSession API.
  *
  * Consumes exactly what the toolchain emits - /ir/<scene>.json and
- * /assets/manifest.json - and drives SceneVm interactively. Contains no
- * scene-specific logic: the starting scene comes from the server config and
- * everything else from the data.
+ * /assets/manifest.json - and contains no scene-specific logic: the starting
+ * scene comes from the URL, everything else from the data.
+ *
+ * Player features: click/Enter advance, choices, backlog (L), auto mode (A,
+ * paced by manifest voice durations), skip mode (hold Ctrl or toggle), one
+ * localStorage save slot with identical-resume semantics (pinned by the
+ * runtime's save/resume tests).
  */
-import { SceneVm } from "../vm.js";
-import type {
-  AssetIndex,
-  AssetManifest,
-  ChoiceEvent,
-  IrOp,
-  IrScene,
-  ManifestEntry,
-  SceneStateSnapshot,
-} from "../types.js";
+import { GameSession, SAVE_FORMAT, type AsyncSceneSource, type SessionEvent, type SessionSave } from "../game-session.js";
+import type { AssetIndex, AssetManifest, ManifestEntry, SceneStateSnapshot } from "../types.js";
 
 declare global {
   interface Window {
-    vnConfig?: { start?: string };
+    vnAssetsBase: string;
   }
 }
 
@@ -35,6 +31,15 @@ const choicesEl = $("choices");
 const titleEl = $("title");
 const hudEl = $("hud");
 const movieEl = $<HTMLVideoElement>("movie");
+const backlogEl = $("backlog");
+const toastEl = $("toast");
+const btn = {
+  auto: $("btn-auto"),
+  skip: $("btn-skip"),
+  log: $("btn-log"),
+  save: $("btn-save"),
+  load: $("btn-load"),
+};
 
 function fitStage(): void {
   const s = Math.min(window.innerWidth / 800, window.innerHeight / 600);
@@ -43,6 +48,13 @@ function fitStage(): void {
 window.addEventListener("resize", fitStage);
 fitStage();
 
+function toast(msg: string): void {
+  toastEl.textContent = msg;
+  toastEl.style.opacity = "1";
+  setTimeout(() => (toastEl.style.opacity = "0"), 1400);
+}
+
+// ---------------------------------------------------------------- assets
 class WebAssets implements AssetIndex {
   constructor(private manifest: AssetManifest) {}
   get(name: string | null | undefined): ManifestEntry | undefined {
@@ -50,6 +62,18 @@ class WebAssets implements AssetIndex {
   }
   relative(name: string | null | undefined): string | null {
     return this.get(name)?.file ?? null;
+  }
+}
+
+class WebSceneSource implements AsyncSceneSource {
+  constructor(private readonly index: WebAssets) {}
+  async load(name: string) {
+    const res = await fetch(`ir/${name.toLowerCase()}.json`);
+    if (!res.ok) return null;
+    return await res.json();
+  }
+  assets(): AssetIndex {
+    return this.index;
   }
 }
 
@@ -112,7 +136,6 @@ function renderState(state: SceneStateSnapshot, assetsBase: string): void {
     bgEl.dataset["url"] = "";
     fillEl.style.background = state.fill === 1 ? "#fff" : "#000";
   }
-  // sprites keyed by slot
   const want = new Map(state.sprites.filter((s) => s.file).map((s) => [`s${s.slot}`, s]));
   for (const el of [...spritesEl.children] as HTMLImageElement[]) {
     if (!want.has(el.id)) el.remove();
@@ -125,7 +148,7 @@ function renderState(state: SceneStateSnapshot, assetsBase: string): void {
       el.className = "sprite";
       spritesEl.appendChild(el);
     }
-    const url = `${window.vnAssetsBase}/${sprite.file}`;
+    const url = `${assetsBase}/${sprite.file}`;
     if (el.dataset["url"] !== url) {
       el.src = url;
       el.dataset["url"] = url;
@@ -134,64 +157,159 @@ function renderState(state: SceneStateSnapshot, assetsBase: string): void {
   }
 }
 
-declare global {
-  interface Window {
-    vnAssetsBase: string;
-  }
-}
-
-// ---------------------------------------------------------------- driver
-type Waiter = { resolve: () => void } | null;
+// ---------------------------------------------------------------- player
+const SAVE_KEY = "e17vn:slot0";
 
 class WebPlayer {
-  private vm: SceneVm | null = null;
-  private readonly vars = new Map<number, number>();
-  private readonly sysVars = new Map<number, number>();
+  private session: GameSession | null = null;
+  private source!: WebSceneSource;
   private assets!: WebAssets;
   private readonly audio = new AudioBox();
-  private clickWaiter: Waiter = null;
-  private sceneName = "";
-  private lines = 0;
-  private sceneCount = 0;
+  private clickWaiter: (() => void) | null = null;
+  private busy = false;
+  private auto = false;
+  private skip = false;
+  private autoTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly assetsBase: string) {
     window.vnAssetsBase = assetsBase;
     textboxEl.addEventListener("click", () => this.advance());
     document.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") this.advance();
+      else if (e.key === "a" || e.key === "A") this.toggleAuto();
+      else if (e.key === "l" || e.key === "L") this.toggleBacklog();
+      else if (e.key === "Escape") backlogEl.classList.add("hidden");
+      else if (e.key === "Control") this.setSkip(true);
     });
+    document.addEventListener("keyup", (e) => {
+      if (e.key === "Control") this.setSkip(false);
+    });
+    btn.auto.addEventListener("click", () => this.toggleAuto());
+    btn.skip.addEventListener("click", () => this.setSkip(!this.skip, true));
+    btn.log.addEventListener("click", () => this.toggleBacklog());
+    btn.save.addEventListener("click", () => this.saveGame());
+    btn.load.addEventListener("click", () => void this.loadGame());
   }
 
+  // ------------------------------------------------ pacing modes
+  private toggleAuto(): void {
+    this.auto = !this.auto;
+    btn.auto.classList.toggle("on", this.auto);
+    if (this.auto) this.scheduleAuto();
+    else this.cancelAuto();
+  }
+
+  private setSkip(on: boolean, sticky = false): void {
+    if (this.skip === on && !sticky) return;
+    this.skip = on;
+    btn.skip.classList.toggle("on", on);
+    if (on) this.advance();
+  }
+
+  private scheduleAuto(): void {
+    this.cancelAuto();
+    if (!this.auto || !this.session) return;
+    const ev = this.session.current;
+    if (!ev || ev.type !== "dialogue") return;
+    const dur = this.session.voiceDuration(ev);
+    const ms = Math.max(1400, dur !== null ? dur * 1000 + 600 : 0, ev.text.length * 45);
+    this.autoTimer = setTimeout(() => {
+      if (this.auto) this.advance();
+    }, ms);
+  }
+
+  private cancelAuto(): void {
+    if (this.autoTimer !== null) clearTimeout(this.autoTimer);
+    this.autoTimer = null;
+  }
+
+  // ------------------------------------------------ backlog
+  private toggleBacklog(): void {
+    if (backlogEl.classList.contains("hidden")) {
+      backlogEl.innerHTML = "";
+      for (const e of this.session?.backlog ?? []) {
+        const div = document.createElement("div");
+        div.className = "entry";
+        const who = e.speaker ? `<div class="who">${e.speaker}</div>` : "";
+        div.innerHTML = `<span class="scn">${e.scene}</span>${who}<div class="line"></div>`;
+        (div.querySelector(".line") as HTMLElement).textContent = e.text;
+        backlogEl.appendChild(div);
+      }
+      backlogEl.classList.remove("hidden");
+      backlogEl.scrollTop = backlogEl.scrollHeight;
+    } else {
+      backlogEl.classList.add("hidden");
+    }
+  }
+
+  // ------------------------------------------------ save / load
+  private saveGame(): void {
+    if (!this.session) return;
+    const ev = this.session.current;
+    if (!ev || ev.type === "sessionEnd") {
+      toast("nothing to save");
+      return;
+    }
+    try {
+      const save = this.session.save();
+      const label = `${save.vm.scene} · line ${save.counters.lines}`;
+      localStorage.setItem(SAVE_KEY, JSON.stringify({ label, savedAt: Date.now(), save }));
+      toast(`saved: ${label}`);
+    } catch (err) {
+      toast(`save failed: ${(err as Error).message}`);
+    }
+  }
+
+  private async loadGame(): Promise<void> {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) {
+      toast("no save");
+      return;
+    }
+    try {
+      const { save, label } = JSON.parse(raw) as { save: SessionSave; label: string };
+      if (save.format !== SAVE_FORMAT) throw new Error("bad save format");
+      this.cancelAuto();
+      this.audio.stopAll();
+      this.clickWaiter = null;
+      choicesEl.classList.add("hidden");
+      backlogEl.classList.add("hidden");
+      titleEl.classList.add("hidden");
+      this.session = await GameSession.restore(this.source, save);
+      toast(`loaded: ${label}`);
+      void this.loop();
+    } catch (err) {
+      toast(`load failed: ${(err as Error).message}`);
+    }
+  }
+
+  // ------------------------------------------------ core loop
   private advance(): void {
     const w = this.clickWaiter;
     this.clickWaiter = null;
-    w?.resolve();
+    w?.();
   }
 
-  private waitClick(): Promise<void> {
+  private waitAdvance(): Promise<void> {
+    if (this.skip) return new Promise((r) => setTimeout(r, 35));
     return new Promise((resolve) => {
-      this.clickWaiter = { resolve };
+      this.clickWaiter = resolve;
+      this.scheduleAuto();
     });
   }
 
   private hud(): void {
-    hudEl.textContent = `${this.sceneName} · scene ${this.sceneCount} · line ${this.lines}`;
-  }
-
-  private async loadScene(name: string): Promise<IrScene | null> {
-    const res = await fetch(`ir/${name.toLowerCase()}.json`);
-    if (!res.ok) return null;
-    return (await res.json()) as IrScene;
+    const s = this.session;
+    hudEl.textContent = s ? `${s.scene} · scene ${s.route.length} · line ${s.lines}` : "";
   }
 
   private async playMovie(name: string): Promise<void> {
     const url = `${this.assetsBase}/movies/${name.toLowerCase()}.mp4`;
     const head = await fetch(url, { method: "HEAD" }).catch(() => null);
     if (!head?.ok) {
-      // no converted movie: show a labelled card instead
       speakerEl.textContent = "";
       textEl.textContent = `[MOVIE: ${name}]`;
-      await this.waitClick();
+      if (!this.skip) await this.waitAdvance();
       return;
     }
     movieEl.src = url;
@@ -205,17 +323,17 @@ class WebPlayer {
       };
       movieEl.onended = done;
       movieEl.onclick = done;
+      if (this.skip) setTimeout(done, 400);
     });
   }
 
-  /** Ops the VM does not present, surfaced during next(). */
-  private pendingOps: IrOp[] = [];
+  private pendingOps: { op: string; asset?: string; arg1?: number | null }[] = [];
 
   private async flushOps(): Promise<void> {
     const ops = this.pendingOps;
     this.pendingOps = [];
     for (const op of ops) {
-      if (op.op === "playSE") {
+      if (op.op === "playSE" && op.asset) {
         const entry = this.assets.get(op.asset);
         if (entry) {
           this.audio.playSe(
@@ -224,36 +342,22 @@ class WebPlayer {
             op.asset.toUpperCase().endsWith("L"),
           );
         }
-      } else if (op.op === "playMovie") {
+      } else if (op.op === "playMovie" && op.asset) {
         await this.playMovie(op.asset);
       }
     }
   }
 
-  async run(start: string): Promise<void> {
-    let current: string | null = start;
-    while (current) {
-      const scene = await this.loadScene(current);
-      if (!scene) {
-        textEl.textContent = `— missing scene: ${current} —`;
-        return;
-      }
-      this.sceneName = scene.scene;
-      this.sceneCount += 1;
-      const vm = new SceneVm(scene, this.assets, {
-        vars: this.vars,
-        sysVars: this.sysVars,
-        onOp: (op) => {
-          this.pendingOps.push(op);
-        },
-      });
-      this.vm = vm;
-      let next: string | null = null;
+  private async loop(): Promise<void> {
+    if (this.busy || !this.session) return;
+    this.busy = true;
+    try {
       for (;;) {
-        const ev = vm.next();
+        const session: GameSession | null = this.session;
+        if (!session) return;
+        const ev: SessionEvent = await session.next();
         await this.flushOps();
         if (ev.type === "dialogue") {
-          this.lines += 1;
           renderState(ev.state, this.assetsBase);
           this.audio.setBgm(
             ev.state.bgm,
@@ -261,30 +365,36 @@ class WebPlayer {
           );
           speakerEl.textContent = ev.speaker ?? "";
           textEl.textContent = ev.text;
-          this.audio.playVoice(ev.voiceFile ? `${this.assetsBase}/${ev.voiceFile}` : null);
+          if (!this.skip) {
+            this.audio.playVoice(ev.voiceFile ? `${this.assetsBase}/${ev.voiceFile}` : null);
+          }
           this.hud();
-          await this.waitClick();
+          await this.waitAdvance();
+          if (this.session !== session) return; // a load replaced the session
           continue;
         }
         if (ev.type === "choice") {
+          this.cancelAuto();
           renderState(ev.state, this.assetsBase);
+          this.hud();
           const option = await this.showChoice(ev);
-          vm.choose(ev, { option });
+          if (this.session !== session) return;
+          session.choose(option);
           continue;
         }
-        if (ev.reason === "gotoScene" && ev.nextScene) next = ev.nextScene;
-        break;
+        // sessionEnd
+        this.audio.stopAll();
+        speakerEl.textContent = "";
+        textEl.textContent = ev.reason === "ending" ? "— FIN —" : `— ${ev.reason} —`;
+        hudEl.textContent += " · ended";
+        return;
       }
-      current = next;
+    } finally {
+      this.busy = false;
     }
-    // terminal scene finished: FIN
-    this.audio.stopAll();
-    speakerEl.textContent = "";
-    textEl.textContent = "— FIN —";
-    hudEl.textContent += " · ended";
   }
 
-  private showChoice(ev: ChoiceEvent): Promise<number> {
+  private showChoice(ev: Extract<SessionEvent, { type: "choice" }>): Promise<number> {
     choicesEl.innerHTML = "";
     choicesEl.classList.remove("hidden");
     return new Promise((resolve) => {
@@ -308,18 +418,25 @@ class WebPlayer {
   async boot(): Promise<void> {
     const manifest = (await (await fetch(`${this.assetsBase}/manifest.json`)).json()) as AssetManifest;
     this.assets = new WebAssets(manifest);
-    const start = window.vnConfig?.start ?? "op00";
+    this.source = new WebSceneSource(this.assets);
+    const params = new URLSearchParams(location.search);
+    const start = params.get("start") ?? "op00";
     await new Promise<void>((resolve) => {
       titleEl.addEventListener("click", () => {
         titleEl.classList.add("hidden");
         resolve();
       });
     });
-    await this.run(start);
+    this.session = await GameSession.start(this.source, start, {
+      vm: {
+        onOp: (op) => {
+          if (op.op === "playSE") this.pendingOps.push({ op: "playSE", asset: op.asset, arg1: op.arg1 });
+          else if (op.op === "playMovie") this.pendingOps.push({ op: "playMovie", asset: op.asset });
+        },
+      },
+    });
+    await this.loop();
   }
 }
 
-const params = new URLSearchParams(location.search);
-const startParam = params.get("start");
-window.vnConfig = startParam ? { start: startParam } : {};
 void new WebPlayer("assets").boot();

@@ -12,15 +12,45 @@ The runtime knows the IR op vocabulary and nothing else — no scene names, no
 asset names, no hardcoded choice ids, and nothing about SC3, LNK, CPS or WAF.
 Everything comes from `scene.json` + `manifest.json`.
 
+## Stable API (phase 4A)
+
+Two layers, both environment-agnostic:
+
+**`SceneVm`** — one scene, synchronous:
+
 ```
 SceneVm.next() -> { type: "dialogue", speaker, text, voice, voiceFile, state }
                 | { type: "choice", id, resultVar, options[], state }
                 | { type: "end", reason, nextScene? }
 SceneVm.choose(event, { option })
+SceneVm.getSaveState() -> VmSaveState        // at the presented event
 ```
 
 `state` carries the resolved background, sprites (with screen x), fill and BGM,
 so a front end only has to draw what it is handed.
+
+**`GameSession`** — the driver front ends should use: async scene chaining
+across `gotoScene` with one shared variable table, a bounded backlog, and
+serializable saves.
+
+```
+GameSession.start(source, "op00", opts)      -> session       // New Game
+GameSession.restore(source, save, opts)      -> session       // resume
+session.next()   -> dialogue | choice | { type: "sessionEnd", reason }
+session.choose(optionIndex)
+session.save()   -> SessionSave   // JSON-safe; format "e17vn-save" v1
+session.backlog  -> BacklogEntry[]
+session.voiceDuration(ev) -> seconds | null  // for auto-mode pacing
+```
+
+`source` is an `AsyncSceneSource` (`load(name)` may return a promise —
+fetch in the browser, `fsSceneSource` on Node). Saves are taken at the
+currently presented event and **resume identically**: the regression suite
+drives the full 12k-event route, saves at several points (including at a
+choice), restores from `JSON.parse(JSON.stringify(save))`, and asserts the
+continuation event stream equals the uninterrupted control run element by
+element. Restored sessions re-present the saved moment without re-counting or
+re-logging it.
 
 **Variables and conditionals.** `varSet` ops execute (`:=` and the affection
 `+=`); `varJump` compares against the shared variable table using the relations
@@ -57,10 +87,13 @@ order), `--max <n>`, `--quiet`.
 ## Browser client
 
 `vn serve <irDir> <assetsDir>` bundles `src/web/` (esbuild) and serves a
-minimal playable client: click-to-advance text with speaker names, sprite/CG
-compositing, choices, BGM/SE/voice, ending movies, and scene chaining with
-persistent variables. It consumes only `/ir/*.json` + `/assets/manifest.json`
-and knows no scene names (the start scene is a URL parameter).
+minimal playable client on top of `GameSession`: click-to-advance text with
+speaker names, sprite/CG compositing, choices, BGM/SE/voice, ending movies,
+and scene chaining with persistent variables — plus a **backlog** overlay (L),
+**auto mode** (A; paced by manifest voice durations), **skip mode** (Ctrl or
+toggle), and a **localStorage save slot** with identical-resume semantics.
+It consumes only `/ir/*.json` + `/assets/manifest.json` and knows no scene
+names (the start scene is a URL parameter).
 
 ## Status
 

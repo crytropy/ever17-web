@@ -43,6 +43,8 @@ export interface VmOptions {
   vars?: Map<number, number>;
   /** Shared system-variable table (sysVarTest reads; e.g. "already seen"). */
   sysVars?: Map<number, number>;
+  /** Resume from a snapshot taken with getSaveState(). */
+  resume?: VmSaveState;
 }
 
 export interface VarJumpInfo {
@@ -57,6 +59,25 @@ export interface VarJumpInfo {
 export interface ChoiceDecision {
   /** Option index to take. */
   option: number;
+}
+
+/**
+ * Serializable snapshot of one SceneVm, taken at an event boundary: restoring
+ * it re-presents the same event with the same presentation state, and the
+ * continuation is identical to an uninterrupted run (pinned by tests).
+ */
+export interface VmSaveState {
+  scene: string;
+  /** Block/op index of the op that produced the currently presented event. */
+  block: string;
+  pc: number;
+  steps: number;
+  presentation: {
+    background: LayerState | null;
+    sprites: [number, LayerState][];
+    bgm: string | null;
+    fill: number | null;
+  };
 }
 
 /**
@@ -90,13 +111,55 @@ export class SceneVm {
     this.opts = opts;
     this.vars = opts.vars ?? new Map();
     this.sysVars = opts.sysVars ?? new Map();
-    this.block = scene.entry;
-    if (!scene.blocks[this.block]) {
-      const first = Object.keys(scene.blocks).sort()[0];
-      if (!first) throw new Error(`scene ${scene.scene} has no blocks`);
-      this.block = first;
+    const resume = opts.resume;
+    if (resume) {
+      if (resume.scene !== scene.scene) {
+        throw new Error(`save is for scene "${resume.scene}", not "${scene.scene}"`);
+      }
+      if (!scene.blocks[resume.block]) {
+        throw new Error(`save block ${resume.block} not present in ${scene.scene}`);
+      }
+      this.block = resume.block;
+      this.pc = resume.pc;
+      this.steps = resume.steps;
+      this.state = {
+        background: resume.presentation.background ? { ...resume.presentation.background } : null,
+        sprites: new Map(resume.presentation.sprites.map(([k, v]) => [k, { ...v }])),
+        bgm: resume.presentation.bgm,
+        fill: resume.presentation.fill,
+      };
+    } else {
+      this.block = scene.entry;
+      if (!scene.blocks[this.block]) {
+        const first = Object.keys(scene.blocks).sort()[0];
+        if (!first) throw new Error(`scene ${scene.scene} has no blocks`);
+        this.block = first;
+      }
     }
     this.blockTrace.push(this.block);
+  }
+
+  /** (block, pc) of the op that produced the last yielded dialogue/choice. */
+  private eventPoint: { block: string; pc: number } | null = null;
+
+  /**
+   * Snapshot for save files. Valid while an event is being presented; before
+   * the first event it captures the scene start.
+   */
+  getSaveState(): VmSaveState {
+    const at = this.eventPoint ?? { block: this.block, pc: this.pc };
+    return {
+      scene: this.scene.scene,
+      block: at.block,
+      pc: at.pc,
+      steps: this.steps,
+      presentation: {
+        background: this.state.background ? { ...this.state.background } : null,
+        sprites: [...this.state.sprites.entries()].map(([k, v]) => [k, { ...v }]),
+        bgm: this.state.bgm,
+        fill: this.state.fill,
+      },
+    };
   }
 
   get currentBlock(): string {
@@ -180,6 +243,7 @@ export class SceneVm {
       switch (op.op) {
         case "dialogue": {
           if (op.text.length === 0 && !op.voice) break; // stage direction with no line
+          this.eventPoint = { block: this.block, pc: this.pc - 1 };
           return {
             type: "dialogue",
             speaker: op.speaker,
@@ -210,6 +274,7 @@ export class SceneVm {
             // reached in normal play (t_1c entry#1); continue linearly.
             break;
           }
+          this.eventPoint = { block: this.block, pc: this.pc - 1 };
           return {
             type: "choice",
             id: op.id,

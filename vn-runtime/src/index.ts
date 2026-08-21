@@ -10,3 +10,13 @@ export type * from "./types.js";
 export { SessionRunner } from "./session.js";
 export type { SessionOptions, SessionResult, SceneSource, GapReport } from "./session.js";
 export { fsSceneSource, NULL_ASSETS } from "./scene-source.js";
+export { GameSession, SAVE_FORMAT, SAVE_VERSION } from "./game-session.js";
+export type {
+  AsyncSceneSource,
+  BacklogEntry,
+  SessionSave,
+  GameSessionOptions,
+  SessionEvent,
+  SessionEndEvent,
+} from "./game-session.js";
+export type { VmSaveState } from "./vm.js";
