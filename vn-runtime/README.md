@@ -124,11 +124,44 @@ playable client on top of `GameSession` and `PixiStage`: authored transitions
 (crossfades, fades, waits — all skippable by click), sprite compositing and
 movement, route-reachable screen effects, choices, BGM/SE/voice, ending
 movies, and scene chaining with persistent variables — plus a **backlog**
-overlay (L), **auto mode** (A; paced by manifest voice durations), **skip
-mode** (Ctrl or toggle; renders instantly), and a **localStorage save slot**
-with identical-resume semantics.
+overlay (L), **auto mode** (A; paced by manifest voice durations), and **skip
+mode** (Ctrl or toggle; renders instantly).
 It consumes only `/ir/*.json` + `/assets/manifest.json` and knows no scene
 names (the start scene is a URL parameter).
+
+## Productionization (phase 5A)
+
+**Multi-slot saves** (`src/web/slots.ts`). Ten slots — autosave (written on
+scene change), quicksave (Q), and manual 1–8 — stored per slot in
+localStorage with a small index. Each save carries a 160×120 JPEG thumbnail
+snapshotted from the Pixi canvas; on quota pressure the slot is rewritten
+without the thumbnail rather than failing. The save/load menus (S / D) render
+the grid with thumbnails, scene · line, and timestamps. A pre-5A single-slot
+save is migrated to slot 1 on first load, preserving its timestamp. Slot
+payloads are unmodified `SessionSave` objects, so the identity guarantees
+above apply to every slot.
+
+**Configuration** (`src/web/config.ts`). `VnConfig` v1: BGM/SE/voice volumes,
+auto-mode delay factor, and transition speed (0 = instant), persisted under
+`e17vn:config`. Loading clamps every field and falls back to defaults on
+corrupt or unknown-version data. The settings panel (⚙ / O) edits it live.
+
+**PWA / mobile.** A web manifest plus service worker make the client
+installable and playable offline once visited: the app shell is cached
+network-first (updates land on next reload; cache is the offline fallback)
+while immutable pipeline output under `/ir/` and `/assets/` is cache-first.
+Icons are original code-drawn artwork — no game art. The stage
+letterboxes into any viewport (`flex:none` keeps the 800×600 layout box;
+a transform scales it), touch taps advance, and safe-area insets are
+respected.
+
+**Route graph** (`src/graph.ts`, `vn graph <irDir> -o graph.json [--dot g.dot]`).
+Static analysis walks every scene's IR for `gotoScene` edges and annotates
+each with the `varSet` writes on the path to it (route flags, the 1223 ending
+id, the 1203 transfer register); dynamic traversal then replays the four
+standard choice policies headlessly and marks which edges real playthroughs
+observe. Output: 104 scenes, 236 static transitions (54 observed), terminal
+and unreferenced scenes, and an optional Graphviz DOT rendering.
 
 ## Status
 
@@ -138,4 +171,6 @@ code: op00 → t_1a…t_6b → tt6a → tt7a → y_ed (Tsugumi ending movie + co
 (`vn route build/ir`) and click-through in the browser. Alternative choice
 policies reach the You bad end and the Sara good end + epilogue. Effects,
 waits and still-unknown opcodes are surfaced through `onOp` rather than
-executed.
+executed. The client is installable as a PWA, fits phone viewports, and has
+multi-slot saves and a persisted settings panel; the route graph tool maps
+all 104 scenes' transitions.

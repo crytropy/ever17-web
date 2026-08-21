@@ -10,9 +10,11 @@
  * localStorage save slot with identical-resume semantics (pinned by the
  * runtime's save/resume tests).
  */
-import { GameSession, SAVE_FORMAT, type AsyncSceneSource, type SessionEvent, type SessionSave } from "../game-session.js";
+import { GameSession, type AsyncSceneSource, type SessionEvent } from "../game-session.js";
 import type { AssetIndex, AssetManifest, ManifestEntry } from "../types.js";
 import { PixiStage } from "./stage.js";
+import { DEFAULT_CONFIG, loadConfig, saveConfig, type VnConfig } from "./config.js";
+import { ALL_SLOTS, AUTO_SLOT, QUICK_SLOT, SaveSlots, type SlotMeta } from "./slots.js";
 
 declare global {
   interface Window {
@@ -38,7 +40,13 @@ const btn = {
   log: $("btn-log"),
   save: $("btn-save"),
   load: $("btn-load"),
+  quick: $("btn-quick"),
+  cfg: $("btn-cfg"),
 };
+const menuEl = $("menu");
+const menuTitleEl = menuEl.querySelector("#menu-title") as HTMLElement;
+const menuSlotsEl = menuEl.querySelector("#menu-slots") as HTMLElement;
+const settingsEl = $("settings");
 
 function fitStage(): void {
   const s = Math.min(window.innerWidth / 800, window.innerHeight / 600);
@@ -82,6 +90,13 @@ class AudioBox {
   private bgmName: string | null = null;
   private voice: HTMLAudioElement | null = null;
   private seChannels = new Map<number, HTMLAudioElement>();
+  volumes = { bgm: 0.8, se: 0.9, voice: 1 };
+
+  applyVolumes(): void {
+    if (this.bgm) this.bgm.volume = this.volumes.bgm;
+    if (this.voice) this.voice.volume = this.volumes.voice;
+    for (const a of this.seChannels.values()) a.volume = this.volumes.se;
+  }
 
   setBgm(name: string | null, url: string | null): void {
     if (name === this.bgmName) return;
@@ -91,6 +106,7 @@ class AudioBox {
     if (name && url) {
       this.bgm = new Audio(url);
       this.bgm.loop = true;
+      this.bgm.volume = this.volumes.bgm;
       void this.bgm.play().catch(() => {});
     }
   }
@@ -99,6 +115,7 @@ class AudioBox {
     this.voice = null;
     if (url) {
       this.voice = new Audio(url);
+      this.voice.volume = this.volumes.voice;
       void this.voice.play().catch(() => {});
     }
   }
@@ -107,6 +124,7 @@ class AudioBox {
     this.seChannels.get(channel)?.pause();
     const a = new Audio(url);
     a.loop = loop;
+    a.volume = this.volumes.se;
     this.seChannels.set(channel, a);
     void a.play().catch(() => {});
   }
@@ -122,11 +140,11 @@ class AudioBox {
 
 
 // ---------------------------------------------------------------- player
-const SAVE_KEY = "e17vn:slot0";
-
 class WebPlayer {
   private session: GameSession | null = null;
   private stage: PixiStage | null = null;
+  private slots = new SaveSlots(localStorage);
+  private config: VnConfig = loadConfig(localStorage);
   private source!: WebSceneSource;
   private assets!: WebAssets;
   private readonly audio = new AudioBox();
@@ -143,8 +161,15 @@ class WebPlayer {
       if (e.key === "Enter" || e.key === " ") this.advance();
       else if (e.key === "a" || e.key === "A") this.toggleAuto();
       else if (e.key === "l" || e.key === "L") this.toggleBacklog();
-      else if (e.key === "Escape") backlogEl.classList.add("hidden");
-      else if (e.key === "Control") this.setSkip(true);
+      else if (e.key === "s" || e.key === "S") this.openMenu("save");
+      else if (e.key === "d" || e.key === "D") this.openMenu("load");
+      else if (e.key === "q" || e.key === "Q") void this.saveToSlot(QUICK_SLOT);
+      else if (e.key === "o" || e.key === "O") this.openSettings();
+      else if (e.key === "Escape") {
+        backlogEl.classList.add("hidden");
+        menuEl.classList.add("hidden");
+        settingsEl.classList.add("hidden");
+      } else if (e.key === "Control") this.setSkip(true);
     });
     document.addEventListener("keyup", (e) => {
       if (e.key === "Control") this.setSkip(false);
@@ -152,8 +177,138 @@ class WebPlayer {
     btn.auto.addEventListener("click", () => this.toggleAuto());
     btn.skip.addEventListener("click", () => this.setSkip(!this.skip, true));
     btn.log.addEventListener("click", () => this.toggleBacklog());
-    btn.save.addEventListener("click", () => this.saveGame());
-    btn.load.addEventListener("click", () => void this.loadGame());
+    btn.save.addEventListener("click", () => this.openMenu("save"));
+    btn.load.addEventListener("click", () => this.openMenu("load"));
+    btn.quick.addEventListener("click", () => void this.saveToSlot(QUICK_SLOT));
+    btn.cfg.addEventListener("click", () => this.openSettings());
+    menuEl.querySelector("#menu-close")!.addEventListener("click", () => menuEl.classList.add("hidden"));
+    settingsEl.querySelector("#settings-close")!.addEventListener("click", () => {
+      settingsEl.classList.add("hidden");
+    });
+    this.applyConfig();
+  }
+
+  private applyConfig(): void {
+    this.audio.volumes = {
+      bgm: this.config.bgmVolume,
+      se: this.config.seVolume,
+      voice: this.config.voiceVolume,
+    };
+    this.audio.applyVolumes();
+  }
+
+  // ------------------------------------------------ settings
+  private openSettings(): void {
+    const bind = (id: string, key: keyof VnConfig): void => {
+      const input = settingsEl.querySelector(`#${id}`) as HTMLInputElement;
+      const label = input.nextElementSibling as HTMLElement;
+      input.value = String(this.config[key]);
+      label.textContent = String(this.config[key]);
+      input.oninput = () => {
+        (this.config[key] as number) = Number(input.value);
+        label.textContent = input.value;
+        saveConfig(localStorage, this.config);
+        this.applyConfig();
+      };
+    };
+    bind("cfg-bgm", "bgmVolume");
+    bind("cfg-se", "seVolume");
+    bind("cfg-voice", "voiceVolume");
+    bind("cfg-auto", "autoDelayFactor");
+    bind("cfg-trans", "transitionSpeed");
+    settingsEl.classList.remove("hidden");
+  }
+
+  // ------------------------------------------------ save menu
+  private async thumbnail(): Promise<string | undefined> {
+    try {
+      const png = await this.stage?.snapshotPng();
+      if (!png) return undefined;
+      const img = new Image();
+      await new Promise<void>((res, rej) => {
+        img.onload = () => res();
+        img.onerror = () => rej(new Error("thumb"));
+        img.src = png;
+      });
+      const c = document.createElement("canvas");
+      c.width = 160;
+      c.height = 120;
+      c.getContext("2d")!.drawImage(img, 0, 0, 160, 120);
+      return c.toDataURL("image/jpeg", 0.6);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async saveToSlot(slot: string): Promise<void> {
+    if (!this.session || !this.session.current || this.session.current.type === "sessionEnd") {
+      toast("nothing to save");
+      return;
+    }
+    try {
+      const thumb = await this.thumbnail();
+      const meta = this.slots.put(slot, this.session.save(), thumb);
+      toast(`saved ${slot === QUICK_SLOT ? "quicksave" : slot === AUTO_SLOT ? "autosave" : "slot " + slot}: ${meta.label}`);
+    } catch (err) {
+      toast(`save failed: ${(err as Error).message}`);
+    }
+  }
+
+  private async loadFromSlot(slot: string): Promise<void> {
+    const save = this.slots.get(slot);
+    if (!save) {
+      toast("empty slot");
+      return;
+    }
+    this.cancelAuto();
+    this.audio.stopAll();
+    this.clickWaiter = null;
+    choicesEl.classList.add("hidden");
+    backlogEl.classList.add("hidden");
+    menuEl.classList.add("hidden");
+    titleEl.classList.add("hidden");
+    try {
+      this.session = await GameSession.restore(this.source, save);
+      toast(`loaded: ${save.vm.scene} · line ${save.counters.lines}`);
+      void this.loop();
+    } catch (err) {
+      toast(`load failed: ${(err as Error).message}`);
+    }
+  }
+
+  private openMenu(mode: "save" | "load"): void {
+    menuTitleEl.textContent = mode.toUpperCase();
+    menuSlotsEl.innerHTML = "";
+    const metas = new Map<string, SlotMeta>(this.slots.list().map((m) => [m.slot, m]));
+    for (const slot of ALL_SLOTS) {
+      if (mode === "save" && slot === AUTO_SLOT) continue; // autosave is automatic
+      const meta = metas.get(slot);
+      if (mode === "load" && !meta) {
+        // show empty slots only in save mode
+      }
+      const div = document.createElement("div");
+      div.className = "slot";
+      const name = slot === AUTO_SLOT ? "AUTO" : slot === QUICK_SLOT ? "QUICK" : `SLOT ${slot}`;
+      if (meta) {
+        const when = new Date(meta.savedAt).toLocaleString();
+        div.innerHTML =
+          (meta.thumb ? `<img alt="">` : `<div class="empty-thumb">·</div>`) +
+          `<div><b>${name}</b></div><div class="slot-label"></div><div class="when">${when}</div>`;
+        if (meta.thumb) (div.querySelector("img") as HTMLImageElement).src = meta.thumb;
+        (div.querySelector(".slot-label") as HTMLElement).textContent = meta.label;
+      } else {
+        div.innerHTML = `<div class="empty-thumb">empty</div><div><b>${name}</b></div><div class="when">—</div>`;
+      }
+      div.addEventListener("click", () => {
+        if (mode === "save") {
+          void this.saveToSlot(slot).then(() => this.openMenu("save"));
+        } else if (meta) {
+          void this.loadFromSlot(slot);
+        }
+      });
+      menuSlotsEl.appendChild(div);
+    }
+    menuEl.classList.remove("hidden");
   }
 
   // ------------------------------------------------ pacing modes
@@ -177,7 +332,9 @@ class WebPlayer {
     const ev = this.session.current;
     if (!ev || ev.type !== "dialogue") return;
     const dur = this.session.voiceDuration(ev);
-    const ms = Math.max(1400, dur !== null ? dur * 1000 + 600 : 0, ev.text.length * 45);
+    const ms =
+      Math.max(1400, dur !== null ? dur * 1000 + 600 : 0, ev.text.length * 45) *
+      this.config.autoDelayFactor;
     this.autoTimer = setTimeout(() => {
       if (this.auto) this.advance();
     }, ms);
@@ -204,47 +361,6 @@ class WebPlayer {
       backlogEl.scrollTop = backlogEl.scrollHeight;
     } else {
       backlogEl.classList.add("hidden");
-    }
-  }
-
-  // ------------------------------------------------ save / load
-  private saveGame(): void {
-    if (!this.session) return;
-    const ev = this.session.current;
-    if (!ev || ev.type === "sessionEnd") {
-      toast("nothing to save");
-      return;
-    }
-    try {
-      const save = this.session.save();
-      const label = `${save.vm.scene} · line ${save.counters.lines}`;
-      localStorage.setItem(SAVE_KEY, JSON.stringify({ label, savedAt: Date.now(), save }));
-      toast(`saved: ${label}`);
-    } catch (err) {
-      toast(`save failed: ${(err as Error).message}`);
-    }
-  }
-
-  private async loadGame(): Promise<void> {
-    const raw = localStorage.getItem(SAVE_KEY);
-    if (!raw) {
-      toast("no save");
-      return;
-    }
-    try {
-      const { save, label } = JSON.parse(raw) as { save: SessionSave; label: string };
-      if (save.format !== SAVE_FORMAT) throw new Error("bad save format");
-      this.cancelAuto();
-      this.audio.stopAll();
-      this.clickWaiter = null;
-      choicesEl.classList.add("hidden");
-      backlogEl.classList.add("hidden");
-      titleEl.classList.add("hidden");
-      this.session = await GameSession.restore(this.source, save);
-      toast(`loaded: ${label}`);
-      void this.loop();
-    } catch (err) {
-      toast(`load failed: ${(err as Error).message}`);
     }
   }
 
@@ -330,7 +446,8 @@ class WebPlayer {
           );
           // play the transition script, then show the line
           await this.stage?.apply(ev.state, ev.actions, (f) => `${this.assetsBase}/${f}`, {
-            instant: this.skip,
+            instant: this.skip || this.config.transitionSpeed === 0,
+            speed: this.config.transitionSpeed || 1,
           });
           if (this.session !== session) return;
           speakerEl.textContent = ev.speaker ?? "";
@@ -402,6 +519,10 @@ class WebPlayer {
       });
     });
     this.session = await GameSession.start(this.source, start, {
+      onSceneChange: (_scene, index) => {
+        // autosave at every scene boundary after the first
+        if (index > 1) setTimeout(() => void this.saveToSlot(AUTO_SLOT), 50);
+      },
       vm: {
         onOp: (op) => {
           if (op.op === "playSE") this.pendingOps.push({ op: "playSE", asset: op.asset, arg1: op.arg1 });
@@ -413,4 +534,7 @@ class WebPlayer {
   }
 }
 
+if ("serviceWorker" in navigator) {
+  void navigator.serviceWorker.register("sw.js").catch(() => {});
+}
 void new WebPlayer("assets").boot();

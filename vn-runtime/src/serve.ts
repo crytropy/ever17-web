@@ -13,6 +13,8 @@ const MIME: Record<string, string> = {
   ".wav": "audio/wav",
   ".mp4": "video/mp4",
   ".mpg": "video/mpeg",
+  ".webmanifest": "application/manifest+json",
+  ".svg": "image/svg+xml",
 };
 
 export interface ServeOptions {

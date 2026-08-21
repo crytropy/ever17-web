@@ -3,12 +3,18 @@
 <head>
 <meta charset="utf-8">
 <title>Ever17 vn-runtime</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#000814">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
 <style>
   html, body { margin:0; height:100%; background:#000; color:#fff;
-               font-family:"Songti SC","SimSun","Noto Serif CJK SC",serif; }
+               font-family:"Songti SC","SimSun","Noto Serif CJK SC",serif;
+               touch-action:manipulation; -webkit-user-select:none; user-select:none;
+               padding:env(safe-area-inset-top) env(safe-area-inset-right)
+                       env(safe-area-inset-bottom) env(safe-area-inset-left); }
   #wrap { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
-  #stage { position:relative; width:800px; height:600px; overflow:hidden; background:#000;
+  #stage { position:relative; width:800px; height:600px; flex:none; overflow:hidden; background:#000;
            transform-origin:center; }
   #pixi-parent, #movie { position:absolute; inset:0; }
   #pixi-parent canvas { display:block; }
@@ -48,6 +54,33 @@
   #backlog .who { color:#9fc3ff; font-size:15px; }
   #backlog .line { font-size:17px; line-height:1.45; white-space:pre-wrap; }
   #backlog .scn { color:#556; font-size:11px; font-family:monospace; }
+  #menu, #settings {
+    position:fixed; inset:0; z-index:25; background:rgba(0,0,10,.8);
+    display:flex; align-items:center; justify-content:center;
+  }
+  #menu-box {
+    background:#0d1428; border:1px solid #445; border-radius:8px; padding:18px 22px;
+    max-width:640px; width:92vw; max-height:84vh; overflow-y:auto;
+  }
+  #menu-title { color:#9fc3ff; font-size:18px; letter-spacing:.2em; margin-bottom:12px; }
+  #menu-slots { display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:10px; }
+  .slot {
+    background:rgba(30,40,80,.6); border:1px solid #334; border-radius:6px; padding:8px;
+    cursor:pointer; font-size:12px; color:#cfe0ff; text-align:left;
+  }
+  .slot:hover { border-color:#9fc3ff; }
+  .slot img { width:100%; border-radius:3px; display:block; margin-bottom:6px; background:#000; }
+  .slot .empty-thumb { width:100%; aspect-ratio:4/3; background:#0a0f20; border-radius:3px;
+    display:flex; align-items:center; justify-content:center; color:#456; margin-bottom:6px; }
+  .slot .when { color:#68a; font-size:10px; }
+  #menu-close, #settings-close {
+    margin-top:14px; font:13px monospace; padding:5px 16px; background:rgba(20,30,60,.85);
+    color:#9fc3ff; border:1px solid #445; border-radius:4px; cursor:pointer;
+  }
+  .cfg-row { display:flex; align-items:center; gap:12px; margin:10px 0; font-size:14px; }
+  .cfg-row label { width:130px; color:#9fc3ff; }
+  .cfg-row input[type=range] { flex:1; }
+  .cfg-row span { width:44px; text-align:right; font-family:monospace; }
   #toast {
     position:fixed; left:50%; bottom:24px; transform:translateX(-50%);
     background:rgba(20,40,80,.95); color:#cfe0ff; padding:6px 18px; border-radius:5px;
@@ -72,8 +105,28 @@
   <button id="btn-auto" title="auto-advance (A)">AUTO</button>
   <button id="btn-skip" title="fast-forward (Ctrl)">SKIP</button>
   <button id="btn-log" title="backlog (L)">LOG</button>
-  <button id="btn-save" title="save">SAVE</button>
-  <button id="btn-load" title="load">LOAD</button>
+  <button id="btn-save" title="save menu (S)">SAVE</button>
+  <button id="btn-load" title="load menu (D)">LOAD</button>
+  <button id="btn-quick" title="quicksave (Q)">QS</button>
+  <button id="btn-cfg" title="settings (O)">⚙</button>
+</div>
+<div id="menu" class="hidden">
+  <div id="menu-box">
+    <div id="menu-title">SAVE</div>
+    <div id="menu-slots"></div>
+    <button id="menu-close">close</button>
+  </div>
+</div>
+<div id="settings" class="hidden">
+  <div id="menu-box">
+    <div id="menu-title">SETTINGS</div>
+    <div class="cfg-row"><label>BGM volume</label><input id="cfg-bgm" type="range" min="0" max="1" step="0.05"><span></span></div>
+    <div class="cfg-row"><label>SE volume</label><input id="cfg-se" type="range" min="0" max="1" step="0.05"><span></span></div>
+    <div class="cfg-row"><label>Voice volume</label><input id="cfg-voice" type="range" min="0" max="1" step="0.05"><span></span></div>
+    <div class="cfg-row"><label>Auto delay</label><input id="cfg-auto" type="range" min="0.25" max="4" step="0.25"><span></span></div>
+    <div class="cfg-row"><label>Transition speed</label><input id="cfg-trans" type="range" min="0" max="4" step="0.25"><span></span></div>
+    <button id="settings-close">close</button>
+  </div>
 </div>
 <div id="toast"></div>
 <script src="bundle.js"></script>
