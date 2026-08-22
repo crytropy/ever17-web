@@ -1,0 +1,16 @@
+{
+  "name": "ever17-web",
+  "version": "0.1.0",
+  "description": "ever17-web: play Ever17 in the browser from your own PC installation",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "kid-contracts": "*",
+    "kid-graph": "*",
+    "kid-runtime": "*",
+    "kid-web-player": "*"
+  }
+}

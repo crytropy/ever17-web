@@ -1,0 +1,20 @@
+{
+  "name": "kid-web-player",
+  "version": "0.1.0",
+  "description": "Web KID Engine: reusable browser player (dialogue, choices, audio, saves, backlog, auto/skip, settings, PWA) and its dev server",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    "./serve": "./src/serve.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.web.json"
+  },
+  "dependencies": {
+    "esbuild": "*",
+    "kid-contracts": "*",
+    "kid-graph": "*",
+    "kid-renderer-pixi": "*",
+    "kid-runtime": "*"
+  }
+}

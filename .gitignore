@@ -1,16 +1,20 @@
 # Never commit the user's game installation (copyrighted assets)
-ever17games/
-ever17-web/
+/ever17games/
+
+# Generated game packages, IR, converted assets, caches (all derived from
+# copyrighted game files - never track or redistribute)
+/.local/
+/build/
+dumps/
+output/
 
 node_modules/
 dist/
-dumps/
-output/
-assets/
 *.tsbuildinfo
 .DS_Store
-build/
-vn-runtime/web/bundle.js
 .claude/
-vn-runtime/web/shots-bundle.js
-vn-runtime/web/routes-bundle.js
+
+# Bundles built by the dev server
+packages/kid-web-player/web/bundle.js
+packages/kid-web-player/web/shots-bundle.js
+packages/kid-web-player/web/routes-bundle.js

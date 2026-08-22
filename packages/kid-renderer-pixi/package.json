@@ -1,0 +1,17 @@
+{
+  "name": "kid-renderer-pixi",
+  "version": "0.1.0",
+  "description": "Web KID Engine: Pixi presentation renderer over PresentationState",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "kid-contracts": "*",
+    "pixi.js": "^8.20.0"
+  }
+}

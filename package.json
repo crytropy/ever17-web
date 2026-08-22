@@ -4,18 +4,18 @@
   "type": "module",
   "workspaces": [
     "packages/*",
+    "adapters/*",
+    "apps/*",
     "e17-parser",
-    "e17-assets",
-    "vn-runtime",
-    "vn-graph"
+    "e17-assets"
   ],
   "scripts": {
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "vitest run",
     "e17": "tsx e17-parser/src/cli.ts",
     "e17-assets": "tsx e17-assets/src/cli.ts",
-    "vn": "tsx vn-runtime/src/cli.ts",
-    "vn-graph": "tsx vn-graph/src/cli.ts"
+    "vn": "tsx apps/ever17-web/src/vn-cli.ts",
+    "vn-graph": "tsx apps/ever17-web/src/vn-graph-cli.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

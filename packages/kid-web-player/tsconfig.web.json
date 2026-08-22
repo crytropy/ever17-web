@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": [],
+    "noEmit": true
+  },
+  "include": [
+    "src/main.ts",
+    "src/config.ts",
+    "src/slots.ts",
+    "src/completion.ts",
+    "src/routes.ts",
+    "src/shots.ts"
+  ]
+}

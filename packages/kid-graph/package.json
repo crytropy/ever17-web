@@ -1,0 +1,26 @@
+{
+  "name": "kid-graph",
+  "version": "0.1.0",
+  "description": "Web KID Engine: route graph model, explorer and analysis tools over scene IR and kid-runtime",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts",
+    "./model": "./src/model.ts",
+    "./layout": "./src/layout.ts",
+    "./viewer": "./src/viewer.ts",
+    "./explain": "./src/explain.ts",
+    "./exploration-types": "./src/exploration-types.ts",
+    "./cli": "./src/cli.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.web.json"
+  },
+  "dependencies": {
+    "kid-contracts": "*",
+    "kid-runtime": "*"
+  },
+  "devDependencies": {
+    "esbuild": "*"
+  }
+}
