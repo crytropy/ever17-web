@@ -119,6 +119,11 @@
   .cfg-row { display:flex; align-items:center; gap:12px; margin:10px 0; font-size:14px; }
   .cfg-row label { width:130px; color:#9fc3ff; }
   .cfg-row input[type=range] { flex:1; }
+  .cfg-row select {
+    flex:1; font:13px monospace; padding:4px 8px; background:rgba(20,30,60,.85);
+    color:#cfe0ff; border:1px solid #445; border-radius:4px;
+  }
+  .cfg-row select:focus-visible, .cfg-row input:focus-visible { outline:2px solid #9fc3ff; outline-offset:2px; }
   .cfg-row span { width:44px; text-align:right; font-family:monospace; }
   #toast {
     position:fixed; left:50%; bottom:24px; transform:translateX(-50%);
@@ -198,7 +203,12 @@
     <div class="cfg-row"><label>BGM volume</label><input id="cfg-bgm" type="range" min="0" max="1" step="0.05"><span></span></div>
     <div class="cfg-row"><label>SE volume</label><input id="cfg-se" type="range" min="0" max="1" step="0.05"><span></span></div>
     <div class="cfg-row"><label>Voice volume</label><input id="cfg-voice" type="range" min="0" max="1" step="0.05"><span></span></div>
-    <div class="cfg-row"><label>Auto delay</label><input id="cfg-auto" type="range" min="0.25" max="4" step="0.25"><span></span></div>
+    <div class="cfg-row"><label>Auto speed</label>
+      <select id="cfg-auto">
+        <option value="fast">Fast</option>
+        <option value="normal">Normal</option>
+        <option value="slow">Slow</option>
+      </select><span></span></div>
     <div class="cfg-row"><label>Transition speed</label><input id="cfg-trans" type="range" min="0" max="4" step="0.25"><span></span></div>
     <button id="settings-close">close</button>
   </div>

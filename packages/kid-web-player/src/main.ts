@@ -25,6 +25,7 @@ import { ALL_SLOTS, AUTO_SLOT, QUICK_SLOT, SaveSlots, type SlotMeta } from "./sl
 import { CompletionTracker, IdbCompletionStore } from "./completion.js";
 import { PersistentProgress } from "./progress.js";
 import { LoadingIndicator } from "./loading-indicator.js";
+import { computeAutoAdvanceDelay } from "./auto-timing.js";
 import { matchEndings, type RouteGraphJson } from "kid-graph/model";
 
 declare global {
@@ -280,9 +281,13 @@ class WebPlayer {
     titleMenu.routes.addEventListener("click", () => this.openRoutes());
     errorEl.querySelector("#error-retry")!.addEventListener("click", () => void this.retryAssets());
     errorEl.querySelector("#error-close")!.addEventListener("click", () => this.clearError());
-    menuEl.querySelector("#menu-close")!.addEventListener("click", () => menuEl.classList.add("hidden"));
+    menuEl.querySelector("#menu-close")!.addEventListener("click", () => {
+      menuEl.classList.add("hidden");
+      if (this.auto) this.scheduleAuto();
+    });
     settingsEl.querySelector("#settings-close")!.addEventListener("click", () => {
       settingsEl.classList.add("hidden");
+      if (this.auto) this.scheduleAuto();
     });
     this.applyConfig();
   }
@@ -320,7 +325,14 @@ class WebPlayer {
 
   // ------------------------------------------------ settings
   private openSettings(): void {
-    const bind = (id: string, key: keyof VnConfig): void => {
+    this.cancelAuto();
+    const autoSelect = settingsEl.querySelector("#cfg-auto") as HTMLSelectElement;
+    autoSelect.value = this.config.autoSpeed;
+    autoSelect.onchange = () => {
+      this.config.autoSpeed = autoSelect.value as VnConfig["autoSpeed"];
+      saveConfig(localStorage, this.ns, this.config);
+    };
+    const bind = (id: string, key: "bgmVolume" | "seVolume" | "voiceVolume" | "transitionSpeed"): void => {
       const input = settingsEl.querySelector(`#${id}`) as HTMLInputElement;
       const label = input.nextElementSibling as HTMLElement;
       input.value = String(this.config[key]);
@@ -335,7 +347,6 @@ class WebPlayer {
     bind("cfg-bgm", "bgmVolume");
     bind("cfg-se", "seVolume");
     bind("cfg-voice", "voiceVolume");
-    bind("cfg-auto", "autoDelayFactor");
     bind("cfg-trans", "transitionSpeed");
     settingsEl.classList.remove("hidden");
   }
@@ -592,6 +603,7 @@ class WebPlayer {
   }
 
   private openMenu(mode: "save" | "load"): void {
+    this.cancelAuto();
     menuTitleEl.textContent = mode.toUpperCase();
     menuSlotsEl.innerHTML = "";
     const metas = new Map<string, SlotMeta>(this.slots.list().map((m) => [m.slot, m]));
@@ -630,9 +642,13 @@ class WebPlayer {
 
   // ------------------------------------------------ pacing modes
   private toggleAuto(): void {
-    this.auto = !this.auto;
-    btn.auto.classList.toggle("on", this.auto);
-    if (this.auto) this.scheduleAuto();
+    this.setAuto(!this.auto);
+  }
+
+  private setAuto(on: boolean): void {
+    this.auto = on;
+    btn.auto.classList.toggle("on", on);
+    if (on) this.scheduleAuto();
     else this.cancelAuto();
   }
 
@@ -646,15 +662,23 @@ class WebPlayer {
   private scheduleAuto(): void {
     this.cancelAuto();
     if (!this.auto || !this.session) return;
+    // Only ever schedules from the line on screen right now, so re-entering
+    // Auto after a pause never inherits an old line's timing.
     const ev = this.session.current;
     if (!ev || ev.type !== "dialogue") return;
-    const dur = this.session.voiceDuration(ev);
-    const ms =
-      Math.max(1400, dur !== null ? dur * 1000 + 600 : 0, ev.text.length * 45) *
-      this.config.autoDelayFactor;
+    if (this.overlayOpen()) return; // backlog/menu/settings: hold, do not advance
+    const seconds = this.session.voiceDuration(ev);
+    const { delayMs } = computeAutoAdvanceDelay(ev.text, seconds !== null ? seconds * 1000 : null, {
+      speed: this.config.autoSpeed,
+    });
     this.autoTimer = setTimeout(() => {
-      if (this.auto) this.advance();
-    }, ms);
+      if (this.auto && !this.overlayOpen()) this.advance();
+    }, delayMs);
+  }
+
+  /** Any surface that should hold Auto rather than let it advance underneath. */
+  private overlayOpen(): boolean {
+    return [backlogEl, menuEl, settingsEl, confirmEl, titleEl].some((el) => !el.classList.contains("hidden"));
   }
 
   private cancelAuto(): void {
@@ -665,6 +689,7 @@ class WebPlayer {
   // ------------------------------------------------ backlog
   private toggleBacklog(): void {
     if (backlogEl.classList.contains("hidden")) {
+      this.cancelAuto(); // reading the log must not advance the story
       backlogEl.innerHTML = "";
       for (const e of this.session?.backlog ?? []) {
         const div = document.createElement("div");
@@ -679,6 +704,7 @@ class WebPlayer {
       backlogEl.scrollTop = backlogEl.scrollHeight;
     } else {
       backlogEl.classList.add("hidden");
+      if (this.auto) this.scheduleAuto();
     }
   }
 
@@ -804,7 +830,8 @@ class WebPlayer {
           continue;
         }
         if (ev.type === "choice") {
-          this.cancelAuto();
+          // a decision is the player's: Auto never answers one
+          this.setAuto(false);
           this.trackEvent(ev);
           await this.stage?.apply(ev.state, ev.actions, (f) => `${this.assetsBase}/${f}`, {
             instant: this.skip,

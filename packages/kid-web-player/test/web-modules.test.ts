@@ -56,7 +56,9 @@ describe("config", () => {
     const c = loadConfig(s, NS);
     expect(c.bgmVolume).toBe(1);
     expect(c.voiceVolume).toBe(0);
-    expect(c.autoDelayFactor).toBe(DEFAULT_CONFIG.autoDelayFactor);
+    // a v1 config migrates; a nonsensical pace falls back to the default one
+    expect(c.autoSpeed).toBe(DEFAULT_CONFIG.autoSpeed);
+    expect(c.version).toBe(DEFAULT_CONFIG.version);
     expect(c.transitionSpeed).toBe(4);
   });
 
