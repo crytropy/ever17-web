@@ -246,7 +246,11 @@ try {
     log: (m) => console.log(m),
   });
 } catch (err) {
-  console.error(`\n${(err as Error).message}`);
+  const message = (err as Error).message;
+  console.error(`\n${message}`);
+  if ((err as Error).name === "ImportInProgressError") {
+    console.error("Wait for it to finish, or stop the other process, then run this again.");
+  }
   process.exit(1);
 }
 

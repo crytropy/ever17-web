@@ -15,8 +15,10 @@
  *     recoverable copy is never discarded because it is old.
  *
  * Concurrency: promotion and recovery run under a lock file in the cache root,
- * so two `prepare` processes cannot interleave their renames. The lock is
- * advisory and self-healing (a stale lock is stolen after LOCK_STALE_MS).
+ * so two `prepare` processes cannot interleave their renames. The critical
+ * section never runs unlocked - a waiting process either acquires the lock or
+ * reports that an import is already in progress. A lock is stolen only when
+ * its owner is genuinely gone, never because an import is taking a long time.
  */
 import {
   closeSync,
@@ -171,49 +173,128 @@ export function promoteDirectory(from: string, to: string, nonce: string): void 
   if (hadPrevious) rmSync(retired, { recursive: true, force: true });
 }
 
+/** Raised when another import holds the lock for longer than we will wait. */
+export class ImportInProgressError extends Error {
+  constructor(readonly ownerPid: number | null) {
+    super(
+      ownerPid === null
+        ? "another import is already in progress for this cache"
+        : `another import (pid ${ownerPid}) is already in progress for this cache`,
+    );
+    this.name = "ImportInProgressError";
+  }
+}
+
+interface LockOwner {
+  pid: number;
+  at: string;
+}
+
+function readOwner(lockPath: string): LockOwner | null {
+  try {
+    const parsed = JSON.parse(readFileSync(lockPath, "utf8")) as Partial<LockOwner>;
+    return typeof parsed.pid === "number" ? { pid: parsed.pid, at: String(parsed.at ?? "") } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether a process is still running. Unknown pids are assumed alive. */
+function processAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM means it exists but belongs to someone else
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** Sleep without spinning the CPU, in a synchronous call path. */
+function sleepSync(ms: number): void {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {
+    const until = Date.now() + ms;
+    while (Date.now() < until) {
+      /* SharedArrayBuffer unavailable: fall back to a short spin */
+    }
+  }
+}
+
+export interface CacheLockOptions {
+  /** How long to wait for another import before giving up. */
+  waitMs?: number;
+  /** Poll interval while waiting. */
+  pollMs?: number;
+  /** Injected for tests; the real one blocks this synchronous call path. */
+  sleep?: (ms: number) => void;
+}
+
 /**
- * Run `fn` while holding the cache lock. Advisory: it serializes the
- * promotion window between cooperating processes, and a lock left behind by a
- * dead process is stolen once it goes stale.
+ * Run `fn` while holding the cache lock, or not at all.
+ *
+ * Promotion and recovery rename directories; two processes interleaving those
+ * renames could leave one import's build promoted over another's. So this
+ * never runs the critical section unlocked: it waits for the current owner,
+ * and if that owner is still alive when the wait runs out it raises
+ * ImportInProgressError rather than proceeding.
+ *
+ * A lock is only stolen when its owner is genuinely gone - a dead process, or
+ * a stale file with no readable owner. A long-running import is not stale.
  */
-export function withCacheLock<T>(outDir: string, fn: () => T, log: (m: string) => void = () => {}): T {
+export function withCacheLock<T>(
+  outDir: string,
+  fn: () => T,
+  log: (m: string) => void = () => {},
+  opts: CacheLockOptions = {},
+): T {
   mkdirSync(outDir, { recursive: true });
   const lockPath = join(outDir, ".import.lock");
-  let held = false;
-  for (let attempt = 0; attempt < 2 && !held; attempt += 1) {
+  const waitMs = opts.waitMs ?? 5 * 60 * 1000;
+  const pollMs = opts.pollMs ?? 250;
+  const deadline = Date.now() + waitMs;
+  let announced = false;
+
+  for (;;) {
     try {
       const fd = openSync(lockPath, "wx");
-      writeFileSync(fd, JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
+      writeFileSync(fd, JSON.stringify({ pid: process.pid, at: new Date().toISOString() } satisfies LockOwner));
       closeSync(fd);
-      held = true;
+      break; // acquired
     } catch {
+      const owner = readOwner(lockPath);
       let age = Number.POSITIVE_INFINITY;
       try {
         age = Date.now() - statSync(lockPath).mtimeMs;
       } catch {
-        continue; // vanished between open and stat: retry
+        continue; // vanished between open and stat: try again immediately
       }
-      if (age > LOCK_STALE_MS) {
-        log(`ignoring a stale import lock (${Math.round(age / 1000)}s old)`);
+      const ownerGone = owner === null ? age > LOCK_STALE_MS : !processAlive(owner.pid);
+      if (ownerGone) {
+        log(
+          owner === null
+            ? `ignoring an unreadable import lock (${Math.round(age / 1000)}s old)`
+            : `ignoring an import lock left by a process that is gone (pid ${owner.pid})`,
+        );
         rmSync(lockPath, { force: true });
         continue;
       }
-      // Another import is in flight. Proceed unlocked rather than blocking a
-      // person's game start; the renames themselves stay atomic.
-      log(`another import holds the cache lock; continuing without it`);
-      break;
+      if (Date.now() >= deadline) throw new ImportInProgressError(owner?.pid ?? null);
+      if (!announced) {
+        announced = true;
+        log(`waiting for another import to finish${owner ? ` (pid ${owner.pid})` : ""}...`);
+      }
+      (opts.sleep ?? sleepSync)(pollMs);
     }
   }
+
   try {
     return fn();
   } finally {
-    if (held) {
-      try {
-        const owner = JSON.parse(readFileSync(lockPath, "utf8")) as { pid?: number };
-        if (owner.pid === process.pid) rmSync(lockPath, { force: true });
-      } catch {
-        rmSync(lockPath, { force: true });
-      }
-    }
+    // only ever release our own lock
+    const owner = readOwner(lockPath);
+    if (owner === null || owner.pid === process.pid) rmSync(lockPath, { force: true });
   }
 }

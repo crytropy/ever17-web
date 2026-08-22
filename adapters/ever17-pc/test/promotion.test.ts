@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawn } from "node:child_process";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
+  ImportInProgressError,
   promoteDirectory,
   recoverInterruptedPromotion,
   retiredCandidates,
@@ -213,27 +216,113 @@ describe("cache lock", () => {
     expect(existsSync(join(root, ".import.lock"))).toBe(false);
   });
 
-  it("does not block on a live lock, and never removes someone else's", () => {
+  it("never runs the critical section while a live owner holds the lock", () => {
     const root = tempRoot();
-    mkdirSync(root, { recursive: true });
-    writeFileSync(join(root, ".import.lock"), JSON.stringify({ pid: 999999, at: "now" }));
-    const notes: string[] = [];
-    const ran = withCacheLock(root, () => "still ran", (m) => notes.push(m));
-    expect(ran).toBe("still ran");
-    expect(notes.join()).toMatch(/holds the cache lock/);
+    // a lock owned by this very process: unambiguously alive
+    writeFileSync(join(root, ".import.lock"), JSON.stringify({ pid: process.pid, at: "now" }));
+    let ran = false;
+    expect(() =>
+      withCacheLock(root, () => { ran = true; }, () => {}, { waitMs: 150, pollMs: 25 }),
+    ).toThrow(ImportInProgressError);
+    expect(ran, "the critical section must not run unlocked").toBe(false);
+    // someone else's lock is left exactly where it was
     expect(existsSync(join(root, ".import.lock"))).toBe(true);
   });
 
-  it("steals a stale lock", () => {
+  it("does not treat a long-running import as stale", () => {
     const root = tempRoot();
-    mkdirSync(root, { recursive: true });
     const lock = join(root, ".import.lock");
-    writeFileSync(lock, JSON.stringify({ pid: 999999, at: "long ago" }));
+    writeFileSync(lock, JSON.stringify({ pid: process.pid, at: "ages ago" }));
+    const longAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    utimesSync(lock, longAgo, longAgo);
+    // old, but its owner is alive: waiting, not stealing
+    expect(() => withCacheLock(root, () => undefined, () => {}, { waitMs: 100, pollMs: 25 })).toThrow(
+      ImportInProgressError,
+    );
+    expect(existsSync(lock)).toBe(true);
+  });
+
+  it("takes over a lock whose owner is gone", () => {
+    const root = tempRoot();
+    // a pid that cannot be running (kill(pid, 0) fails)
+    writeFileSync(join(root, ".import.lock"), JSON.stringify({ pid: 2 ** 30, at: "long ago" }));
+    const notes: string[] = [];
+    let ran = false;
+    withCacheLock(root, () => { ran = true; }, (m) => notes.push(m));
+    expect(ran).toBe(true);
+    expect(notes.join()).toMatch(/process that is gone/);
+    expect(existsSync(join(root, ".import.lock"))).toBe(false);
+  });
+
+  it("takes over an unreadable stale lock", () => {
+    const root = tempRoot();
+    const lock = join(root, ".import.lock");
+    writeFileSync(lock, "not json");
     const longAgo = new Date(Date.now() - 60 * 60 * 1000);
     utimesSync(lock, longAgo, longAgo);
     const notes: string[] = [];
-    withCacheLock(root, () => undefined, (m) => notes.push(m));
-    expect(notes.join()).toMatch(/stale import lock/);
-    expect(existsSync(lock)).toBe(false);
+    let ran = false;
+    withCacheLock(root, () => { ran = true; }, (m) => notes.push(m));
+    expect(ran).toBe(true);
+    expect(notes.join()).toMatch(/unreadable import lock/);
   });
+
+  it("acquires the lock once the previous owner releases it", () => {
+    const root = tempRoot();
+    const lock = join(root, ".import.lock");
+    writeFileSync(lock, JSON.stringify({ pid: process.pid, at: "now" }));
+    // The wait is synchronous, so a timer could never fire during it; the
+    // injected sleep stands in for "the other process finished".
+    let polls = 0;
+    let ran = false;
+    withCacheLock(root, () => { ran = true; }, () => {}, {
+      waitMs: 5000,
+      pollMs: 1,
+      sleep: () => {
+        polls += 1;
+        if (polls === 3) rmSync(lock, { force: true });
+      },
+    });
+    expect(ran).toBe(true);
+    expect(polls).toBe(3); // it really did wait rather than barge in
+  });
+
+  it("serializes two real processes: neither observes the other inside", async () => {
+    // Two node processes race for the same lock. Each records the interval it
+    // spent inside the critical section; the intervals must not overlap.
+    const root = tempRoot();
+    const script = join(root, "worker.mjs");
+    const promotionUrl = pathToFileURL(join(fileURLToPath(new URL(".", import.meta.url)), "..", "src", "promotion.ts")).href;
+    writeFileSync(
+      script,
+      `const { withCacheLock } = await import(${JSON.stringify(promotionUrl)});
+       const root = process.argv[2];
+       const out = withCacheLock(root, () => {
+         const start = Date.now();
+         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
+         return { start, end: Date.now() };
+       }, () => {}, { waitMs: 20000, pollMs: 20 });
+       console.log(JSON.stringify(out));`,
+    );
+    const run = (): Promise<{ start: number; end: number }> =>
+      new Promise((resolve, reject) => {
+        const child = spawn(process.execPath, ["--import", "tsx", script, root], {
+          cwd: process.cwd(),
+          env: { ...process.env },
+        });
+        let out = "";
+        let err = "";
+        child.stdout.on("data", (d: Buffer) => (out += d.toString()));
+        child.stderr.on("data", (d: Buffer) => (err += d.toString()));
+        child.on("close", (code) => {
+          if (code !== 0) reject(new Error(`worker failed (${String(code)}): ${err}`));
+          else resolve(JSON.parse(out.trim()) as { start: number; end: number });
+        });
+      });
+
+    const [a, b] = await Promise.all([run(), run()]);
+    const overlap = Math.min(a.end, b.end) - Math.max(a.start, b.start);
+    expect(overlap, `intervals overlapped by ${overlap}ms`).toBeLessThanOrEqual(0);
+    expect(existsSync(join(root, ".import.lock"))).toBe(false);
+  }, 60_000);
 });

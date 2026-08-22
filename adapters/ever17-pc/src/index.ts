@@ -37,8 +37,9 @@ export {
   retiredCandidates,
   withCacheLock,
   buildDirName,
+  ImportInProgressError,
   BUILD_SUFFIX,
   RETIRE_SUFFIX,
   ABANDONED_BUILD_MS,
 } from "./promotion.js";
-export type { RecoveryOutcome } from "./promotion.js";
+export type { RecoveryOutcome, CacheLockOptions } from "./promotion.js";
