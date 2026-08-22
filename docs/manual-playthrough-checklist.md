@@ -37,16 +37,46 @@ outstanding. The ending names are the ones the game itself records — the
 route explorer (`ROUTES` on the title screen, or `R` in game) shows which you
 have collected.
 
-| # | Route / ending | Reached (date) | Save slot | Notes |
-|---|---|---|---|---|
-| 1 |  |  |  |  |
-| 2 |  |  |  |  |
-| 3 |  |  |  |  |
-| 4 |  |  |  |  |
-| 5 |  |  |  |  |
-| 6 |  |  |  |  |
-| 7 |  |  |  |  |
-| 8 |  |  |  |  |
+| # | Route / ending | Reached (date) | Save slot | Appears in RECORDS? | Notes |
+|---|---|---|---|---|---|
+| 1 |  |  |  |  |  |
+| 2 |  |  |  |  |  |
+| 3 |  |  |  |  |  |
+| 4 |  |  |  |  |  |
+| 5 |  |  |  |  |  |
+| 6 |  |  |  |  |  |
+| 7 |  |  |  |  |  |
+| 8 |  |  |  |  |  |
+
+## Cross-playthrough progression
+
+This is the part only a full set of playthroughs can confirm. The game is
+built to be replayed: finishing a route records it, and finishing enough of
+them opens the last one. The mechanism is tested with seeded state, but
+whether it *feels* right over real playthroughs is yours to judge.
+
+| Check | Result | Notes |
+|---|---|---|
+| After an ending, returning to the title keeps the progress |  |  |
+| Starting a New Game after an ending behaves differently from the very first run |  |  |
+| Route clears accumulate across separate sessions (close the tab, come back) |  |  |
+| After the required routes are cleared, the final route becomes available in normal play |  |  |
+| The final route is *not* reachable before that |  |  |
+| Loading an old save does not undo a route you have already cleared |  |  |
+| Save data export, then import into a fresh browser profile, restores everything |  |  |
+
+## Naming accuracy
+
+The chapter names come from the game's own developer menus, rendered with the
+character names this release uses. Worth a sceptical eye:
+
+| Check | Result | Notes |
+|---|---|---|
+| HUD chapter name matches where you actually are |  |  |
+| Route names match the characters they belong to |  |  |
+| Day numbers line up with the story's own days |  |  |
+| Epilogues and bad ends are labelled sensibly |  |  |
+| Nothing in the ordinary UI shows a script id, line number or variable |  |  |
 
 ## Per-session sanity pass
 
@@ -61,11 +91,18 @@ Worth a quick check once per play session rather than once per line.
 - [ ] Sound effects fire where they should
 - [ ] Backgrounds and sprites appear, positioned sensibly
 - [ ] Choices show every option you expect
-- [ ] Auto mode advances at a comfortable pace
+- [ ] Auto advances at a comfortable pace, and longer lines wait longer
+- [ ] Auto waits for a voiced line to finish before advancing
+- [ ] Auto switches itself off when a choice appears
+- [ ] Auto pauses while the backlog, save/load or settings are open
+- [ ] Auto speed (Fast / Normal / Slow) makes an audible difference
 - [ ] Skip mode is fast and stops when you turn it off
 - [ ] Backlog (`L`) shows recent lines in order
 - [ ] Save, then Load, returns to exactly the same line
 - [ ] Returning to the title and back does not lose a save
+- [ ] CONTINUE names the chapter you actually left off in
+- [ ] RECORDS shows only chapters and endings you have reached
+- [ ] RECORDS never names a route you have not entered yet
 - [ ] No red errors in the browser console
 
 ## Issue blocks
@@ -156,3 +193,12 @@ So it does not get re-reported:
 - **Movies need `ffmpeg`** at import time. Without it the game shows a
   `[MOVIE: name]` placeholder instead.
 - **Cross-game reuse is unproven.** This build is validated on Ever17 only.
+- **The developer route graph still exists** at `/debug/routes`. It shows the
+  entire game including routes and endings you have not reached, so opening it
+  will spoil the story. It is deliberately not linked from anywhere in the
+  game.
+- **Chapter names come from the game's developer menus**, which are in
+  Japanese while the story text is Chinese. Route and viewpoint names are
+  rendered with the names this release uses for those characters. If one reads
+  wrongly to you, that is worth reporting - it is a judgement call, not
+  recovered text.
