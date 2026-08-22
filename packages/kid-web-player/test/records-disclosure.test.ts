@@ -12,42 +12,49 @@ import { endingCardsFor, groupDiscoveredChapters } from "../src/records.js";
  * reached. These tests drive the production grouping and card functions
  * directly - re-implementing the rules here would only prove the test agrees
  * with itself, which is what an earlier version of this file did.
+ *
+ * The catalog below is an invented game. This is a generic engine package, so
+ * it must not carry another game's scene names; using made-up ones also makes
+ * the point that the grouping rules know nothing about any particular title.
  */
 
 const catalog: NarrativeProgressCatalog = {
   format: NARRATIVE_CATALOG_FORMAT,
   version: NARRATIVE_CATALOG_VERSION,
-  gameId: "ever17",
-  fallbackLabel: "未知章节",
+  gameId: "sample",
+  fallbackLabel: "Unknown chapter",
   viewpoints: [
-    { id: "takeshi", name: "武视角", order: 0 },
-    { id: "kid", name: "少年视角", order: 1 },
-    { id: "both", name: "双视角", order: 2 },
+    { id: "north", name: "North", order: 0 },
+    { id: "south", name: "South", order: 1 },
+    { id: "both", name: "Both", order: 2 },
   ],
   scenes: {
-    op00: { shortLabel: "序章", kind: "opening" },
-    y_ed: { shortLabel: "终章", kind: "ending" },
-    t_1a: { shortLabel: "武视角 · 第1日", kind: "chapter", viewpointId: "takeshi", viewpoint: "武视角", routeId: "common-takeshi", day: 1 },
-    t_1b: { shortLabel: "武视角 · 第1日", kind: "chapter", viewpointId: "takeshi", viewpoint: "武视角", routeId: "common-takeshi", day: 1 },
-    t_2a: { shortLabel: "武视角 · 第2日", kind: "chapter", viewpointId: "takeshi", viewpoint: "武视角", routeId: "common-takeshi", day: 2 },
-    tt6a: { shortLabel: "鸠篇 · 第6日", kind: "chapter", viewpointId: "takeshi", viewpoint: "武视角", routeId: "tsugumi", day: 6 },
-    s_1a: { shortLabel: "少年视角 · 第1日", kind: "chapter", viewpointId: "kid", viewpoint: "少年视角", routeId: "common-kid", day: 1 },
-    ssep: { shortLabel: "沙罗篇 · 尾声", kind: "epilogue", viewpointId: "kid", viewpoint: "少年视角", routeId: "sara" },
+    intro: { shortLabel: "Prologue", kind: "opening" },
+    finale: { shortLabel: "Finale", kind: "ending" },
+    // two scenes on the same day, to prove days collapse
+    n1a: { shortLabel: "North · Day 1", kind: "chapter", viewpointId: "north", viewpoint: "North", routeId: "common-north", day: 1 },
+    n1b: { shortLabel: "North · Day 1", kind: "chapter", viewpointId: "north", viewpoint: "North", routeId: "common-north", day: 1 },
+    n2a: { shortLabel: "North · Day 2", kind: "chapter", viewpointId: "north", viewpoint: "North", routeId: "common-north", day: 2 },
+    nh6a: { shortLabel: "Hazel · Day 6", kind: "chapter", viewpointId: "north", viewpoint: "North", routeId: "hazel", day: 6 },
+    s1a: { shortLabel: "South · Day 1", kind: "chapter", viewpointId: "south", viewpoint: "South", routeId: "common-south", day: 1 },
+    swep: { shortLabel: "Wren · Epilogue", kind: "epilogue", viewpointId: "south", viewpoint: "South", routeId: "wren" },
     // a route only reachable once the game unlocks it
-    yc3a: { shortLabel: "可可篇 · 第3日", kind: "chapter", viewpointId: "both", viewpoint: "双视角", routeId: "coco", day: 3 },
-    system: { shortLabel: "未知章节", kind: "other" },
-    debug: { shortLabel: "未知章节", kind: "other" },
+    b3a: { shortLabel: "Lark · Day 3", kind: "chapter", viewpointId: "both", viewpoint: "Both", routeId: "lark", day: 3 },
+    system: { shortLabel: "Unknown chapter", kind: "other" },
+    devmenu: { shortLabel: "Unknown chapter", kind: "other" },
   },
   routes: [
-    { id: "common-takeshi", name: "共通篇", viewpointId: "takeshi", viewpoint: "武视角", common: true },
-    { id: "tsugumi", name: "鸠篇", viewpointId: "takeshi", viewpoint: "武视角" },
-    { id: "common-kid", name: "共通篇", viewpointId: "kid", viewpoint: "少年视角", common: true },
-    { id: "sara", name: "沙罗篇", viewpointId: "kid", viewpoint: "少年视角" },
-    { id: "coco", name: "可可篇", viewpointId: "both", viewpoint: "双视角" },
+    // both viewpoints' shared chapters share a display name on purpose:
+    // that collision is what an id built from a display name would lose
+    { id: "common-north", name: "Common", viewpointId: "north", viewpoint: "North", common: true },
+    { id: "hazel", name: "Hazel", viewpointId: "north", viewpoint: "North" },
+    { id: "common-south", name: "Common", viewpointId: "south", viewpoint: "South", common: true },
+    { id: "wren", name: "Wren", viewpointId: "south", viewpoint: "South" },
+    { id: "lark", name: "Lark", viewpointId: "both", viewpoint: "Both" },
   ],
   endings: [
-    { id: "tsugumi-good", name: "鸠篇 · 结局", routeId: "tsugumi", aliases: ["END_TU00", "end_tu00"] },
-    { id: "sara-good", name: "沙罗篇 · 结局", routeId: "sara", aliases: ["END_SA00"] },
+    { id: "hazel-good", name: "Hazel · Ending", routeId: "hazel", aliases: ["END_HA00", "end_ha00"] },
+    { id: "wren-good", name: "Wren · Ending", routeId: "wren", aliases: ["END_WR00"] },
   ],
 };
 
@@ -64,74 +71,74 @@ describe("chapter disclosure", () => {
   });
 
   it("reveals a viewpoint and day only after visiting them", () => {
-    const groups = groupDiscoveredChapters(catalog, ["t_1a"]);
+    const groups = groupDiscoveredChapters(catalog, ["n1a"]);
     expect(groups).toHaveLength(1);
-    expect(groups[0]!.name).toBe("武视角");
+    expect(groups[0]!.name).toBe("North");
     expect(groups[0]!.routes[0]!.days).toEqual([1]);
     expect(groups[0]!.routes[0]!.days).not.toContain(2);
   });
 
   it("collects several visits to the same day into one entry", () => {
-    const groups = groupDiscoveredChapters(catalog, ["t_1a", "t_1b", "t_2a"]);
+    const groups = groupDiscoveredChapters(catalog, ["n1a", "n1b", "n2a"]);
     expect(groups[0]!.routes[0]!.days).toEqual([1, 2]);
   });
 
   it("names the shared chapters by their route, not by the viewpoint again", () => {
-    // regression: ids built from display names produced a "武视角 / 武视角" row
-    const groups = groupDiscoveredChapters(catalog, ["t_1a", "s_1a"]);
-    const takeshi = groups.find((g) => g.viewpointId === "takeshi")!;
-    const kid = groups.find((g) => g.viewpointId === "kid")!;
-    expect(takeshi.routes[0]!.name).toBe("共通篇");
-    expect(kid.routes[0]!.name).toBe("共通篇");
-    expect(takeshi.name).toBe("武视角");
-    expect(kid.name).toBe("少年视角");
+    // regression: ids built from display names produced a "North / North" row
+    const groups = groupDiscoveredChapters(catalog, ["n1a", "s1a"]);
+    const north = groups.find((g) => g.viewpointId === "north")!;
+    const south = groups.find((g) => g.viewpointId === "south")!;
+    expect(north.routes[0]!.name).toBe("Common");
+    expect(south.routes[0]!.name).toBe("Common");
+    expect(north.name).toBe("North");
+    expect(south.name).toBe("South");
   });
 
-  it("keeps the two viewpoints' shared chapters apart", () => {
-    const groups = groupDiscoveredChapters(catalog, ["t_1a", "s_1a"]);
-    expect(groups.map((g) => g.viewpointId).sort()).toEqual(["kid", "takeshi"]);
-    expect(routeIds(["t_1a", "s_1a"]).sort()).toEqual(["common-kid", "common-takeshi"]);
+  it("keeps the two viewpoints' shared chapters apart despite one display name", () => {
+    const groups = groupDiscoveredChapters(catalog, ["n1a", "s1a"]);
+    expect(groups.map((g) => g.viewpointId).sort()).toEqual(["north", "south"]);
+    expect(routeIds(["n1a", "s1a"]).sort()).toEqual(["common-north", "common-south"]);
   });
 
   it("never names a route the player has not entered", () => {
-    const ids = routeIds(["op00", "t_1a", "t_2a"]);
-    expect(ids).toContain("common-takeshi");
-    expect(ids).not.toContain("tsugumi");
-    expect(ids).not.toContain("coco");
+    const ids = routeIds(["intro", "n1a", "n2a"]);
+    expect(ids).toContain("common-north");
+    expect(ids).not.toContain("hazel");
+    expect(ids).not.toContain("lark");
   });
 
   it("does not leak the hidden final route just because the data contains it", () => {
     // a player who has finished an ordinary route but not unlocked the last
-    const ids = routeIds(["op00", "t_1a", "tt6a"]);
-    expect(ids).toContain("tsugumi");
-    expect(ids).not.toContain("coco");
-    expect(viewpointIds(["op00", "t_1a", "tt6a"])).not.toContain("both");
+    const ids = routeIds(["intro", "n1a", "nh6a"]);
+    expect(ids).toContain("hazel");
+    expect(ids).not.toContain("lark");
+    expect(viewpointIds(["intro", "n1a", "nh6a"])).not.toContain("both");
   });
 
   it("reveals the final route once the player is actually in it", () => {
-    expect(routeIds(["op00", "t_1a", "yc3a"])).toContain("coco");
-    expect(viewpointIds(["op00", "t_1a", "yc3a"])).toContain("both");
+    expect(routeIds(["intro", "n1a", "b3a"])).toContain("lark");
+    expect(viewpointIds(["intro", "n1a", "b3a"])).toContain("both");
   });
 
   it("hides system and developer scripts even when visited", () => {
-    const groups = groupDiscoveredChapters(catalog, ["system", "debug", "t_1a"]);
+    const groups = groupDiscoveredChapters(catalog, ["system", "devmenu", "n1a"]);
     expect(groups).toHaveLength(1);
-    expect(groups[0]!.viewpointId).toBe("takeshi");
+    expect(groups[0]!.viewpointId).toBe("north");
   });
 
   it("gives chapters with no viewpoint their own row", () => {
-    const groups = groupDiscoveredChapters(catalog, ["op00", "y_ed"]);
+    const groups = groupDiscoveredChapters(catalog, ["intro", "finale"]);
     const standalone = groups.find((g) => g.viewpointId === "")!;
-    expect(standalone.routes.map((r) => r.name).sort()).toEqual(["序章", "终章"]);
+    expect(standalone.routes.map((r) => r.name).sort()).toEqual(["Finale", "Prologue"]);
     // and no duplicate chip repeating the row's own name
     for (const r of standalone.routes) expect(r.extras).toEqual([]);
   });
 
   it("lists an epilogue as its own entry under its route", () => {
-    const groups = groupDiscoveredChapters(catalog, ["ssep"]);
-    const sara = groups[0]!.routes.find((r) => r.routeId === "sara")!;
-    expect(sara.name).toBe("沙罗篇");
-    expect(sara.extras).toEqual(["沙罗篇 · 尾声"]);
+    const groups = groupDiscoveredChapters(catalog, ["swep"]);
+    const wren = groups[0]!.routes.find((r) => r.routeId === "wren")!;
+    expect(wren.name).toBe("Wren");
+    expect(wren.extras).toEqual(["Wren · Epilogue"]);
   });
 });
 
@@ -142,22 +149,24 @@ describe("ending disclosure", () => {
   });
 
   it("names an ending only once collected, and resolves movie codes", () => {
-    expect(endingNames(["END_TU00"])).toEqual(["鸠篇 · 结局", null]);
-    expect(endingNames(["end_tu00", "END_SA00"])).toEqual(["鸠篇 · 结局", "沙罗篇 · 结局"]);
+    expect(endingNames(["END_HA00"])).toEqual(["Hazel · Ending", null]);
+    expect(endingNames(["end_ha00", "END_WR00"])).toEqual(["Hazel · Ending", "Wren · Ending"]);
   });
 
   it("keeps the roster's length so the screen does not shift", () => {
-    expect(endingCardsFor(catalog, ["END_TU00"])).toHaveLength(catalog.endings.length);
+    expect(endingCardsFor(catalog, ["END_HA00"])).toHaveLength(catalog.endings.length);
   });
 
   it("adds a card for an ending the roster never listed, once reached", () => {
-    const cards = endingCardsFor(catalog, ["y_ed"]);
+    const cards = endingCardsFor(catalog, ["finale"]);
     expect(cards).toHaveLength(catalog.endings.length + 1);
-    expect(cards[cards.length - 1]).toMatchObject({ collected: true, name: "终章" });
+    expect(cards[cards.length - 1]).toMatchObject({ collected: true, name: "Finale" });
   });
 
   it("ignores an unknown id rather than showing an identifier", () => {
     const cards = endingCardsFor(catalog, ["not_a_thing"]);
+    // the screen's own word for "ending" - the point is that the raw id is
+    // never what a player sees, whatever the interface language is
     expect(cards[cards.length - 1]!.name).toBe("结局");
     expect(JSON.stringify(cards)).not.toContain("not_a_thing");
   });
@@ -165,7 +174,7 @@ describe("ending disclosure", () => {
 
 describe("labels", () => {
   it("shows no scene id anywhere, even for an unlabelled scene", () => {
-    for (const scene of ["op00", "t_1a", "yc3a", "unknown_scene"]) {
+    for (const scene of ["intro", "n1a", "b3a", "unknown_scene"]) {
       expect(labelForScene(catalog, scene).shortLabel.toLowerCase()).not.toContain(scene);
     }
   });

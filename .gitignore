@@ -18,3 +18,4 @@ dist/
 packages/kid-web-player/web/bundle.js
 packages/kid-web-player/web/shots-bundle.js
 packages/kid-web-player/web/routes-bundle.js
+packages/kid-web-player/web/records-bundle.js

@@ -1,0 +1,17 @@
+# Source is text, always. A test fixture that needs an exotic character must
+# spell it as a JavaScript escape, never as a raw byte - a stray control byte
+# once made git treat a TypeScript file as binary, which hides every diff.
+*.ts    text diff
+*.tsx   text diff
+*.js    text diff
+*.mjs   text diff
+*.json  text diff
+*.md    text diff
+*.html  text diff
+*.css   text diff
+*.yml   text diff
+
+# Generated or opaque payloads: never diffed, never line-ending mangled.
+*.png   binary
+*.mp4   binary
+*.ogg   binary

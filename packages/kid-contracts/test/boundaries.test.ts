@@ -157,22 +157,29 @@ describe("package dependency boundaries", () => {
     expect([...seen].some((f) => f.endsWith("game-session.ts"))).toBe(true);
   });
 
-  it("generic engine sources contain no Ever17 scene names, ending ids or control vars", () => {
-    // Scene names, ending ids and route-control variable ids recovered from
-    // Ever17; none may appear as behavior in generic code. Format-id strings
-    // ("e17vn-save") are compatibility constants, not scenario knowledge,
-    // and are not matched by these patterns.
-    const banned =
-      /\b(op00|y_ed|sybd|ssep|tt6a|tt7a|sy6b|s_1a|t_[1-6][a-d]|END_[A-Z]{2}00|1203|1050|1223)\b/i;
+  // Scene names, ending ids and route-control variable ids recovered from
+  // Ever17; none may appear as behavior in generic code. Format-id strings
+  // ("e17vn-save") are compatibility constants, not scenario knowledge, and
+  // are not matched by these patterns.
+  const BANNED_EVER17 =
+    /\b(op00|y_ed|sybd|ssep|tt6a|tt7a|sy6b|s_1a|t_[1-6][a-d]|END_[A-Z]{2}00|1203|1050|1223)\b/i;
+
+  const scanGeneric = (subdir: string): string[] => {
     const offenders: string[] = [];
     for (const pkg of GENERIC) {
-      for (const file of sourceFiles(join(root, PKG_DIRS[pkg]!, "src"))) {
+      for (const file of sourceFiles(join(root, PKG_DIRS[pkg]!, subdir))) {
         const code = stripComments(readFileSync(file, "utf8"));
-        const m = code.match(banned);
+        const m = code.match(BANNED_EVER17);
         if (m) offenders.push(`${file.slice(root.length + 1)}: "${m[0]}"`);
       }
     }
-    expect(offenders).toEqual([]);
-  });
+    return offenders;
+  };
 
+  it("generic engine sources contain no Ever17 scene names, ending ids or control vars", () => {
+    // Only `src` is scanned: behavior is the boundary. Test fixtures across
+    // these packages do use recovered scene ids deliberately, because a graph
+    // or save test is only meaningful against a realistic scenario shape.
+    expect(scanGeneric("src")).toEqual([]);
+  });
 });

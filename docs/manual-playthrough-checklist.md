@@ -64,6 +64,31 @@ whether it *feels* right over real playthroughs is yours to judge.
 | The final route is *not* reachable before that |  |  |
 | Loading an old save does not undo a route you have already cleared |  |  |
 | Save data export, then import into a fresh browser profile, restores everything |  |  |
+| Saving inside an ending and quitting before it finishes does **not** clear the route |  |  |
+| The route is credited only once the ending actually plays out |  |  |
+
+## Starting over, if you ever want to
+
+You should not need this to validate anything — every check above works on a
+profile that already has progress. It is here because the option exists and
+you should know what it does before you press it.
+
+**Settings → PLAYER DATA → *start completely fresh***. It asks first and
+lists what it removes (saves, quicksave, Continue, cross-playthrough unlocks,
+RECORDS, the run in progress) and what it keeps (your installation, the
+converted assets, your settings). *Export first* is offered in the same
+dialog.
+
+| Check | Result | Notes |
+|---|---|---|
+| The confirmation describes what will happen before anything is erased |  |  |
+| After it, Continue is gone and RECORDS is empty |  |  |
+| Settings (volume, Auto speed, transitions) survive |  |  |
+| The game does not re-import or re-convert assets afterwards |  |  |
+| A New Game after it behaves like a genuine first run |  |  |
+| Export beforehand, import afterwards, brings everything back |  |  |
+
+Nothing else resets your data — not an update, not an import, not a test run.
 
 ## Naming accuracy
 

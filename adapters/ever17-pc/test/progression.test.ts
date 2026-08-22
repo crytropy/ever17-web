@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { existsSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { GameSession, NULL_ASSETS, SceneVm } from "kid-runtime";
+import { GameSession, NULL_ASSETS, SceneVm, SessionRunner } from "kid-runtime";
 import { fsSceneSource } from "kid-runtime/node";
 import { detectCrossRunVars } from "kid-graph";
 import {
@@ -13,7 +13,7 @@ import {
   type PersistentState,
   type PersistentStatePolicy,
 } from "kid-contracts";
-import { EVER17_GAME_ID, EVER17_START_SCENE } from "../src/profile.js";
+import { EVER17_GAME_ID, EVER17_PROFILE, EVER17_START_SCENE } from "../src/profile.js";
 
 /**
  * Ever17 is built to be replayed: clearing routes is what opens the last one.
@@ -101,15 +101,36 @@ describe.skipIf(!HAVE_IR)("cross-run progression (real scenario)", () => {
     const gate = derived.find((v) => full.get(v) === 1 && baseline.get(v) !== 1);
     expect(gate, "a complete set should unlock something").toBeDefined();
 
-    // dropping any single clear must be able to leave the gate shut
-    const partials = clears.map((dropped) =>
-      runScene("y_ed", clears.filter((v) => v !== dropped).map((v) => [v, 1] as [number, number])),
-    );
-    for (const p of partials) expect(p.get(counter!) ?? 0).toBeLessThanOrEqual(clears.length);
-    expect(
-      partials.some((p) => p.get(gate!) !== 1),
-      "an incomplete set should leave the final route locked",
-    ).toBe(true);
+    // Every incomplete combination must stay locked - not merely one of them.
+    // The scene credits the run that just finished, so a subset is "complete"
+    // exactly when the flag it sets itself is the only one missing.
+    const selfSet = clears.filter((v) => baseline.get(v) === 1);
+    const subsets: { seeded: number[]; label: string }[] = [];
+    for (const dropped of clears) {
+      const seeded = clears.filter((v) => v !== dropped);
+      subsets.push({ seeded, label: `without ${dropped}` });
+      for (const alsoDropped of seeded) {
+        subsets.push({
+          seeded: seeded.filter((v) => v !== alsoDropped),
+          label: `without ${dropped} and ${alsoDropped}`,
+        });
+      }
+    }
+    subsets.push({ seeded: [], label: "no clears at all" });
+
+    for (const { seeded, label } of subsets) {
+      const result = runScene("y_ed", seeded.map((v) => [v, 1] as [number, number]));
+      const credited = new Set([...seeded, ...selfSet]);
+      const expectUnlocked = clears.every((v) => credited.has(v));
+      expect(result.get(counter!) ?? 0, label).toBeLessThanOrEqual(clears.length);
+      if (expectUnlocked) {
+        expect(result.get(gate!), `${label} (self-cleared: complete)`).toBe(1);
+      } else {
+        expect(result.get(gate!), `${label} should leave the final route locked`).not.toBe(1);
+      }
+    }
+    // and at least one genuinely incomplete case existed to prove it
+    expect(subsets.length).toBeGreaterThan(clears.length);
 
     // and that is exactly what a later New Game inherits
     const policy: PersistentStatePolicy = {
@@ -174,6 +195,52 @@ describe.skipIf(!HAVE_IR)("cross-run progression (real scenario)", () => {
     expect(runCountsAsCompletion(finished!)).toBe(true);
     stored = mergePersistentState(policy, stored, finisher.vars);
     expect(seedFromPersistentState(policy, stored).length).toBeGreaterThan(0);
+  });
+
+  it("the unlock actually opens the final route in a real playthrough", () => {
+    // Not "the variables are in the save" - play the game from the opening
+    // and see whether the run reaches chapters it could not reach before.
+    const derived = [...detectCrossRunVars(scenesOf(), EVER17_START_SCENE)].sort((a, b) => a - b);
+    const policy: PersistentStatePolicy = { policyVersion: 1, vars: derived, merge: "max", derivedFrom: "test" };
+
+    const play = (seed: [number, number][]): string[] => {
+      const runner = new SessionRunner(fsSceneSource(IR_DIR), {
+        policy: "first",
+        endingScenes: EVER17_PROFILE.endingScenePatterns,
+        vm: { profile: EVER17_PROFILE },
+      });
+      for (const [k, v] of seed) runner.vars.set(k, v);
+      return runner.run(EVER17_START_SCENE).route.map((s) => s.toLowerCase());
+    };
+
+    // a first-ever playthrough: whatever it reaches, it is the baseline
+    const firstRun = play([]);
+    expect(firstRun.length).toBeGreaterThan(10);
+
+    // now the state a player has after finishing the required routes
+    const cleared = runScene("y_ed", []);
+    const clears = derived.filter((v) => cleared.get(v) === 1);
+    const unlockedState = mergePersistentState(
+      policy,
+      EMPTY_PERSISTENT_STATE(EVER17_GAME_ID),
+      derived.map((v) => [v, 1] as [number, number]),
+    );
+    const laterRun = play(seedFromPersistentState(policy, unlockedState));
+
+    // chapters the unlocked run reaches that a first playthrough cannot
+    const newlyReachable = laterRun.filter((s) => !firstRun.includes(s));
+    expect(
+      newlyReachable.length,
+      `an unlocked playthrough should reach chapters a first one cannot (first: ${firstRun.join(",")})`,
+    ).toBeGreaterThan(0);
+    expect(clears.length).toBeGreaterThan(0);
+
+    // and a fresh play-data generation - which seeds nothing - is locked again
+    const freshGeneration = play(seedFromPersistentState(policy, EMPTY_PERSISTENT_STATE(EVER17_GAME_ID)));
+    expect(freshGeneration).toEqual(firstRun);
+    for (const scene of newlyReachable) {
+      expect(freshGeneration, `${scene} must be unreachable again after a reset`).not.toContain(scene);
+    }
   });
 
   it("a seeded New Game really starts with the inherited state", async () => {
