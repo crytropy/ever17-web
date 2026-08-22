@@ -1,4 +1,7 @@
-# vn-graph
+# kid-graph
+
+(Renamed from `vn-graph` in phase 6A; depends only on `kid-contracts` and
+`kid-runtime` - the former runtime/graph cycle is gone.)
 
 Route-graph model, automatic explorer and completion analysis over the
 Ever17 IR and the vn-runtime engine. This package turns the recovered VM

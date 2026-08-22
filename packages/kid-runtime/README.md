@@ -1,7 +1,14 @@
-# vn-runtime
+# kid-runtime
 
-A minimal, data-driven visual-novel runtime that plays Ever17 scenes from the
-decompiled IR plus extracted assets.
+The Web KID Engine's environment-independent execution core: a data-driven
+visual-novel runtime that plays KID scenes from decompiled IR plus an asset
+manifest. (Renamed from `vn-runtime` in phase 6A; the browser player and Pixi
+renderer that used to live here are now `kid-web-player` and
+`kid-renderer-pixi`, and the JSON contracts are owned by `kid-contracts`.)
+
+Game-specific interpretation (canvas geometry, BGM naming, ending-scene
+classification) comes from the `GameProfile` an adapter supplies - nothing
+about a particular title is hardcoded here.
 
 It is deliberately **not a UI**. It is the layer that proves the pipeline:
 IR in, story events out, with presentation state resolved against real assets.

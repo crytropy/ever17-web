@@ -136,13 +136,19 @@ if (a.cmd === "check") {
   process.exit(check(gameDir));
 }
 
-const prepared = prepareGamePackage({
-  gameDir,
-  outDir: resolve(a.out),
-  force: a.rebuild,
-  branding: EVER17_BRANDING,
-  log: (m) => console.log(m),
-});
+let prepared: ReturnType<typeof prepareGamePackage>;
+try {
+  prepared = prepareGamePackage({
+    gameDir,
+    outDir: resolve(a.out),
+    force: a.rebuild,
+    branding: EVER17_BRANDING,
+    log: (m) => console.log(m),
+  });
+} catch (err) {
+  console.error(`\n${(err as Error).message}`);
+  process.exit(1);
+}
 
 if (a.cmd === "prepare") {
   console.log(
