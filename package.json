@@ -12,6 +12,7 @@
   "scripts": {
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "vitest run",
+    "ever17": "tsx apps/ever17-web/src/cli.ts",
     "e17": "tsx e17-parser/src/cli.ts",
     "e17-assets": "tsx e17-assets/src/cli.ts",
     "vn": "tsx apps/ever17-web/src/vn-cli.ts",

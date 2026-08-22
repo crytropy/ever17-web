@@ -9,7 +9,7 @@ import {
   type GamePackageMeta,
   type PlayerBranding,
 } from "kid-contracts";
-import { EVER17_GAME_ID, EVER17_PROFILE, EVER17_TITLE } from "ever17-pc";
+import { EVER17_GAME_ID, EVER17_PROFILE, EVER17_START_SCENE, EVER17_TITLE } from "ever17-pc";
 
 export const EVER17_BRANDING: PlayerBranding = {
   title: EVER17_TITLE,
@@ -20,11 +20,6 @@ export const EVER17_BRANDING: PlayerBranding = {
   pwaName: "Ever17",
   pwaShortName: "Ever17",
 };
-
-/** Default Ever17 start scene: op00 is the opening the debug menu labels
- * オープニング; the title screen (startup.scr) is system UI outside the
- * story graph. */
-export const EVER17_START_SCENE = "op00";
 
 /** Assemble Ever17 game-package metadata (dev serving and the importer). */
 export function ever17PackageMeta(overrides: Partial<GamePackageMeta> = {}): GamePackageMeta {

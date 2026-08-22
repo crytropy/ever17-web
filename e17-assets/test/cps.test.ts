@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { rleUnpack } from "../src/cps/rle.js";
 import { cpsDeobfuscate } from "../src/cps/deobfuscate.js";
-import { parseCpsHeader, decodeCps, parseCpsPrt } from "../src/cps/index.js";
+import { parseCpsHeader, decodeCps, parseCpsMeta, parseCpsPrt } from "../src/cps/index.js";
 import { encodePng } from "../src/png.js";
 import { HAVE_GAME, library } from "./helpers.js";
 
@@ -145,6 +145,29 @@ describe.skipIf(!HAVE_GAME)("CPS decoding (real archives)", () => {
         const img = decodeCps(e.data);
         expect(img.width, `${file}/${e.name}`).toBeGreaterThan(0);
         expect(img.rgba.length).toBe(img.width * img.height * 4);
+      }
+    }
+  });
+});
+
+describe.skipIf(!HAVE_GAME)("header-only CPS metadata (real archives)", () => {
+  it("parseCpsMeta matches the full decode across every image archive", () => {
+    // a handful of entries per archive, spread across the entry list
+    for (const archive of ["bg.dat", "chara.dat", "system.dat"]) {
+      const a = library().archive(archive);
+      const picks = [0, Math.floor(a.count / 2), a.count - 1]
+        .map((i) => a.entries[i]!)
+        .filter(Boolean);
+      for (const entry of picks) {
+        const meta = parseCpsMeta(entry.data);
+        const full = parseCpsPrt(entry.data);
+        expect(meta, `${archive}/${entry.name}`).toEqual({
+          width: full.width,
+          height: full.height,
+          hasAlpha: full.hasAlpha,
+          baseLeftOffset: full.baseLeftOffset,
+          nominalWidth: full.nominalWidth,
+        });
       }
     }
   });

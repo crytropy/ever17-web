@@ -308,7 +308,13 @@ class WebPlayer {
     }
     this.cancelAuto();
     this.audio.stopAll();
+    // Park the current waiters aside: they are woken only after the session
+    // is swapped, so the running loop() sees the change, drops its stale
+    // event, and continues with the restored session (never deadlocks).
+    const wakeClick = this.clickWaiter;
+    const wakeChoice = this.choiceResolve;
     this.clickWaiter = null;
+    this.choiceResolve = null;
     choicesEl.classList.add("hidden");
     backlogEl.classList.add("hidden");
     menuEl.classList.add("hidden");
@@ -318,6 +324,8 @@ class WebPlayer {
       this.moviesSinceChoice = [];
       this.moviesPlayed = new Set();
       toast(`loaded: ${save.vm.scene} · line ${save.counters.lines}`);
+      wakeClick?.();
+      wakeChoice?.(-1);
       void this.loop();
     } catch (err) {
       toast(`load failed: ${(err as Error).message}`);
@@ -474,6 +482,9 @@ class WebPlayer {
     });
   }
 
+  /** Resolver of the currently displayed choice, if any (woken on load). */
+  private choiceResolve: ((option: number) => void) | null = null;
+
   private pendingOps: { op: string; asset?: string; arg1?: number | null }[] = [];
 
   private async flushOps(): Promise<void> {
@@ -531,7 +542,7 @@ class WebPlayer {
             instant: this.skip || this.config.transitionSpeed === 0,
             speed: this.config.transitionSpeed || 1,
           });
-          if (this.session !== session) return;
+          if (this.session !== session) continue; // a load replaced the session
           speakerEl.textContent = ev.speaker ?? "";
           textEl.textContent = ev.text;
           if (!this.skip) {
@@ -539,7 +550,7 @@ class WebPlayer {
           }
           this.hud();
           await this.waitAdvance();
-          if (this.session !== session) return; // a load replaced the session
+          if (this.session !== session) continue; // a load replaced the session
           continue;
         }
         if (ev.type === "choice") {
@@ -548,10 +559,10 @@ class WebPlayer {
           await this.stage?.apply(ev.state, ev.actions, (f) => `${this.assetsBase}/${f}`, {
             instant: this.skip,
           });
-          if (this.session !== session) return;
+          if (this.session !== session) continue; // a load replaced the session
           this.hud();
           const option = await this.showChoice(ev);
-          if (this.session !== session) return;
+          if (this.session !== session) continue; // a load replaced the session
           this.tracker?.choice(session.scene, ev.id ?? `b${ev.state.block}`, option);
           this.moviesSinceChoice = [];
           session.choose(option);
@@ -577,19 +588,20 @@ class WebPlayer {
     choicesEl.innerHTML = "";
     choicesEl.classList.remove("hidden");
     return new Promise((resolve) => {
+      this.choiceResolve = (option) => {
+        this.choiceResolve = null;
+        choicesEl.classList.add("hidden");
+        resolve(option);
+      };
       for (const o of ev.options) {
         if (!o.enabled) continue;
         const b = document.createElement("button");
         b.textContent = o.text;
-        b.addEventListener("click", () => {
-          choicesEl.classList.add("hidden");
-          resolve(o.index);
-        });
+        b.addEventListener("click", () => this.choiceResolve?.(o.index));
         choicesEl.appendChild(b);
       }
       if (choicesEl.children.length === 0) {
-        choicesEl.classList.add("hidden");
-        resolve(ev.options[0]?.index ?? 0);
+        this.choiceResolve(ev.options[0]?.index ?? 0);
       }
     });
   }

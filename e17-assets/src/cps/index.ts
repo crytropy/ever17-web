@@ -1,6 +1,6 @@
 import { cpsDeobfuscate } from "./deobfuscate.js";
 import { rleUnpack } from "./rle.js";
-import { parsePrt, prtToRgba } from "./prt.js";
+import { parsePrt, parsePrtHeader, prtToRgba, type PrtMeta } from "./prt.js";
 import type { DecodedImage, PrtInfo } from "../types.js";
 
 /**
@@ -57,4 +57,23 @@ export function parseCpsPrt(buf: Buffer): PrtInfo {
   return parsePrt(cpsToPrt(buf));
 }
 
-export { cpsDeobfuscate, rleUnpack, parsePrt, prtToRgba };
+/**
+ * Image metadata (dimensions, alpha, sprite anchor) without decoding pixels:
+ * deobfuscates only the payload prefix and RLE-decompresses just the PRT
+ * header. Used to build whole-game manifests quickly; equivalence with the
+ * full decode is pinned by tests against real archives.
+ */
+export function parseCpsMeta(buf: Buffer): PrtMeta {
+  const h = parseCpsHeader(buf);
+  // 512 deobfuscated payload bytes comfortably cover the worst-case RLE
+  // input needed to produce the 64 output bytes the header parse reads.
+  const plain = cpsDeobfuscate(buf, 512);
+  const prtHead =
+    h.compression & 1
+      ? rleUnpack(plain.subarray(20, Math.min(plain.length, 20 + 512)), 64)
+      : plain.subarray(20, 20 + Math.min(h.plainSize, 64));
+  return parsePrtHeader(prtHead);
+}
+
+export { cpsDeobfuscate, rleUnpack, parsePrt, parsePrtHeader, prtToRgba };
+export type { PrtMeta };

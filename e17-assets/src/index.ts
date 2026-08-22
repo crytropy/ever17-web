@@ -1,4 +1,5 @@
-export { decodeCps, cpsToPrt, parseCpsPrt, parseCpsHeader, cpsDeobfuscate, rleUnpack, parsePrt, prtToRgba } from "./cps/index.js";
+export { decodeCps, cpsToPrt, parseCpsPrt, parseCpsMeta, parseCpsHeader, cpsDeobfuscate, rleUnpack, parsePrt, parsePrtHeader, prtToRgba } from "./cps/index.js";
+export type { PrtMeta } from "./cps/index.js";
 export type { CpsHeader } from "./cps/index.js";
 export { decodeWaf, parseWaf, pcmToWav, decodeAdpcm, decodeRawPcm, WAF_HEADER_SIZE } from "./waf/index.js";
 export { encodePng } from "./png.js";

@@ -19,7 +19,7 @@
  * declared sizes match width*height*bytesPerPixel + header for every image
  * tested across bg.dat, chara.dat and system.dat.
  */
-export function cpsDeobfuscate(input: Buffer): Buffer {
+export function cpsDeobfuscate(input: Buffer, limitBytes?: number): Buffer {
   if (input.length < 24) {
     throw new RangeError(`CPS payload too small: ${input.length} bytes`);
   }
@@ -32,7 +32,10 @@ export function cpsDeobfuscate(input: Buffer): Buffer {
   }
 
   let key = (data.readUInt32LE(vOff) + vOff + 0x03786425) >>> 0;
-  const limit = len - 4;
+  // The keystream is sequential from 0x10, so a caller that only needs the
+  // start of the payload (header probing) can stop early; bytes past the
+  // limit are left scrambled.
+  const limit = limitBytes === undefined ? len - 4 : Math.min(len - 4, 0x10 + limitBytes);
   for (let i = 0x10; i < limit; i += 4) {
     if (i + 4 <= limit && i !== vOff) {
       const v = (data.readUInt32LE(i) - key - len) >>> 0;

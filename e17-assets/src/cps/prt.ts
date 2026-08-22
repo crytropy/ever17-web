@@ -24,6 +24,44 @@ import type { DecodedImage, PrtInfo } from "../types.js";
  * Confidence: Confirmed - decoded images render correctly (verified visually
  * for backgrounds, event CGs, alpha-masked character sprites and UI parts).
  */
+/** The metadata half of a PRT header (no pixel data needed or validated). */
+export interface PrtMeta {
+  width: number;
+  height: number;
+  hasAlpha: boolean;
+  baseLeftOffset: number;
+  nominalWidth: number;
+}
+
+/**
+ * Parse just the fixed PRT header (first 36 bytes) - enough for manifest
+ * metadata without decompressing the pixel planes.
+ */
+export function parsePrtHeader(prt: Buffer): PrtMeta {
+  if (prt.length < 20 || prt.subarray(0, 4).toString("latin1") !== "PRT\0") {
+    throw new Error(`not a PRT payload: ${prt.subarray(0, 4).toString("hex")}`);
+  }
+  const version = prt.readUInt16LE(4);
+  if (version !== 0x65 && version !== 0x66) {
+    throw new Error(`unsupported PRT version 0x${version.toString(16)}`);
+  }
+  let width = prt.readUInt16LE(12);
+  let height = prt.readUInt16LE(14);
+  const hasAlpha = prt.readUInt32LE(16) !== 0;
+  let baseLeftOffset = 0;
+  const nominalWidth = width;
+  if (version === 0x66) {
+    if (prt.length < 36) throw new Error("PRT v0x66 header truncated");
+    baseLeftOffset = prt.readUInt32LE(20);
+    const width2 = prt.readUInt32LE(28);
+    const height2 = prt.readUInt32LE(32);
+    if (width2 !== 0) width = width2;
+    if (height2 !== 0) height = height2;
+  }
+  if (width === 0 || height === 0) throw new Error(`degenerate PRT size ${width}x${height}`);
+  return { width, height, hasAlpha, baseLeftOffset, nominalWidth };
+}
+
 export function parsePrt(prt: Buffer): PrtInfo {
   if (prt.length < 20 || prt.subarray(0, 4).toString("latin1") !== "PRT\0") {
     throw new Error(`not a PRT payload: ${prt.subarray(0, 4).toString("hex")}`);

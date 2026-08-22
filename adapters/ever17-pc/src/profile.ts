@@ -9,6 +9,11 @@ import { PROFILE_VERSION, type GameProfile } from "kid-contracts/profile";
 export const EVER17_GAME_ID = "ever17";
 export const EVER17_TITLE = "Ever17";
 
+/** Ever17's New Game start scene: op00 is the opening the debug menu labels
+ * オープニング; the title screen (startup.scr) is system UI outside the
+ * story graph. */
+export const EVER17_START_SCENE = "op00";
+
 export const EVER17_PROFILE: GameProfile = {
   profileVersion: PROFILE_VERSION,
   /** The shipped artwork is 800x600. */
