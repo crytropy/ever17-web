@@ -259,6 +259,8 @@ export function serve(opts: ServeOptions): void {
       return;
     }
     // Asset miss: give the adapter a chance to convert it from the originals.
+    // Failures answer with a readable 5xx rather than leaving the request (and
+    // the player) hanging - the client retries or reports it.
     if (assetRel && opts.materializeAsset) {
       Promise.resolve(opts.materializeAsset(assetRel)).then(
         (produced) => {
@@ -266,8 +268,10 @@ export function serve(opts: ServeOptions): void {
           else missing();
         },
         (err: Error) => {
-          res.writeHead(500, { "content-type": "text/plain" });
-          res.end(`asset conversion failed for ${assetRel}: ${err.message}`);
+          const detail = err.message || String(err);
+          console.error(`asset conversion failed: ${detail}`);
+          res.writeHead(503, { "content-type": "text/plain", "cache-control": "no-store" });
+          res.end(`asset conversion failed for ${assetRel}: ${detail}`);
         },
       );
       return;

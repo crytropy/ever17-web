@@ -57,18 +57,7 @@ import {
   type PlayerBranding,
 } from "kid-contracts";
 import { buildCfg, disassemble, encodingForScript, lowerScene, parseLnk, parseSc3 } from "e17-parser";
-import {
-  AssetLibrary,
-  RAW_PCM_CHANNELS,
-  RAW_PCM_SAMPLE_RATE,
-  decodeCps,
-  decodeRawPcm,
-  decodeWaf,
-  encodePng,
-  parseCpsMeta,
-  parseWaf,
-  pcmToWav,
-} from "e17-assets";
+import { AssetLibrary, RAW_PCM_CHANNELS, RAW_PCM_SAMPLE_RATE, parseCpsMeta, parseWaf } from "e17-assets";
 import { discoverInstallation, type Ever17Installation } from "./discover.js";
 import { fingerprintInstallation } from "./fingerprint.js";
 import { validateCachedPackage, type CacheValidation } from "./cache.js";
@@ -558,39 +547,4 @@ function buildPackage(ctx: BuildContext): GamePackageMeta {
     );
   }
   return meta;
-}
-
-/**
- * Lazy asset conversion for the web server: given a missing path under the
- * package's assets/ root ("images/<base>.png" or "audio/<base>.wav"), decode
- * it from the original archives into the cache and return the absolute path.
- */
-export function createAssetMaterializer(
-  gameDir: string,
-  assetsDir: string,
-): (relPath: string) => string | null {
-  const lib = new AssetLibrary(gameDir);
-  return (relPath: string): string | null => {
-    const m = relPath.replace(/\\/g, "/").match(/^(images|audio)\/([a-z0-9_\-.]+)\.(png|wav)$/i);
-    if (!m) return null;
-    const kind = m[1]!.toLowerCase() === "images" ? ("image" as const) : ("audio" as const);
-    const base = m[2]!.toLowerCase();
-    const resolved = lib.resolve(base, kind);
-    if (!resolved) return null;
-    const outPath = join(assetsDir, m[1]!.toLowerCase(), `${base}.${m[3]!.toLowerCase()}`);
-    if (existsSync(outPath)) return outPath;
-    mkdirSync(join(assetsDir, m[1]!.toLowerCase()), { recursive: true });
-    const tmp = `${outPath}.tmp-${process.pid}`;
-    if (kind === "image") {
-      writeFileSync(tmp, encodePng(decodeCps(resolved.entry.data)));
-    } else {
-      const audio =
-        resolved.format === "pcm"
-          ? decodeRawPcm(resolved.entry.data, RAW_PCM_CHANNELS, RAW_PCM_SAMPLE_RATE)
-          : decodeWaf(resolved.entry.data);
-      writeFileSync(tmp, pcmToWav(audio));
-    }
-    renameSync(tmp, outPath);
-    return outPath;
-  };
 }
