@@ -327,16 +327,11 @@ export class PixiStage {
     const files = [...this.failedFiles];
     if (files.length === 0) return true;
     this.failedFiles.clear();
+    // Bumping the counter is enough: the reload below asks for a URL the
+    // loader has never seen, so no cache eviction is needed (and asking for
+    // one it never cached only produces a warning).
+    for (const f of files) this.retryCount.set(f, (this.retryCount.get(f) ?? 0) + 1);
     const resolveUrl = this.lastResolveUrl;
-    for (const f of files) {
-      this.retryCount.set(f, (this.retryCount.get(f) ?? 0) + 1);
-      if (!resolveUrl) continue;
-      try {
-        await Assets.unload(resolveUrl(f));
-      } catch {
-        /* not cached (or already unloaded): the new URL below still retries */
-      }
-    }
     if (this.lastState && resolveUrl) await this.settleToState(this.lastState, resolveUrl);
     return this.failedFiles.size === 0;
   }

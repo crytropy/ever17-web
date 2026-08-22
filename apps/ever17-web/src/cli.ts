@@ -7,7 +7,7 @@
  *
  *   npm run ever17 -- serve --game-dir "/path/to/Ever17"
  */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import {
@@ -17,6 +17,7 @@ import {
   fingerprintInstallation,
   prepareGamePackage,
 } from "ever17-pc";
+import { KID_ENGINE_VERSION, type ImportReport } from "kid-contracts";
 import { EVER17_BRANDING } from "./branding.js";
 
 function usage(): never {
@@ -26,6 +27,7 @@ usage:
   ever17 serve   [gameDir] [options]   validate + convert (cached) + play at http://127.0.0.1:<port>/
   ever17 prepare [gameDir] [options]   validate + convert only (no server)
   ever17 check   [gameDir]             validate the installation and report the file list
+  ever17 diagnostics [gameDir]         print versions + import summary for a bug report (no game content)
 
 options:
   --game-dir <dir>   the Ever17 PC installation (default: ./ever17games when present)
@@ -129,6 +131,81 @@ function check(gameDir: string, a: Args): number {
   return 0;
 }
 
+/** Cached packages under the cache root, newest first. */
+function cachedPackages(outDir: string): { dir: string; fingerprint: string; report: ImportReport | null }[] {
+  if (!existsSync(outDir)) return [];
+  return readdirSync(outDir)
+    .filter((n) => /^[0-9a-f]{16}$/.test(n))
+    .map((n) => {
+      const dir = join(outDir, n);
+      const reportPath = join(dir, "import-report.json");
+      let report: ImportReport | null = null;
+      try {
+        report = existsSync(reportPath) ? (JSON.parse(readFileSync(reportPath, "utf8")) as ImportReport) : null;
+      } catch {
+        report = null;
+      }
+      return { dir, fingerprint: n, report, mtime: statSync(dir).mtimeMs };
+    })
+    .sort((a, b) => b.mtime - a.mtime)
+    .map(({ dir, fingerprint, report }) => ({ dir, fingerprint, report }));
+}
+
+/**
+ * Environment facts a bug report needs. Deliberately prints no story text,
+ * asset bytes or IR - only names, sizes, versions and counts.
+ */
+function diagnostics(gameDir: string, a: Args): number {
+  const outDir = resolve(a.out);
+  console.log(`ever17-web diagnostics`);
+  console.log(`  node        ${process.version} on ${process.platform} ${process.arch}`);
+  console.log(`  engine      ${KID_ENGINE_VERSION}`);
+  console.log(`  game dir    ${gameDir}`);
+  console.log(`  cache root  ${outDir}`);
+
+  const inst = discoverInstallation(gameDir);
+  console.log(`\ninstallation`);
+  for (const f of inst.files) console.log(`  ${f.name.padEnd(14)} ${String(f.size).padStart(11)} bytes`);
+  console.log(`  movie/*.e17    ${String(inst.movieFiles.length).padStart(11)} files`);
+  console.log(`  scripts inside script.dat: ${inst.scriptCount}`);
+  for (const w of inst.warnings) console.log(`  warning: ${w}`);
+  for (const p of inst.problems) console.log(`  PROBLEM: ${p}`);
+  if (inst.problems.length === 0) {
+    const fp = fingerprintInstallation(inst, {
+      indexPath: digestIndexPath(outDir),
+      ...(a.verify ? { verify: true } : {}),
+    });
+    console.log(`  fingerprint ${fp.fingerprint} (${fp.algo}${a.verify ? ", fully verified" : ""})`);
+  }
+
+  const packages = cachedPackages(outDir);
+  console.log(`\ncached packages: ${packages.length}`);
+  for (const p of packages) {
+    const r = p.report;
+    if (!r) {
+      console.log(`  ${p.fingerprint}  (no import report - obsolete, safe to delete)`);
+      continue;
+    }
+    const bySeverity = r.issues.reduce<Record<string, number>>((acc, i) => {
+      acc[i.severity] = (acc[i.severity] ?? 0) + 1;
+      return acc;
+    }, {});
+    console.log(
+      `  ${p.fingerprint}  status=${r.status} scripts=${r.scripts.decompiled}/${r.scripts.discovered} ` +
+        `assets=${r.assets.indexed}/${r.assets.referenced} (missing story=${r.assets.missingStory}, ` +
+        `system=${r.assets.missingSystem}) movies=${r.movies.converted}/${r.movies.referenced}`,
+    );
+    console.log(
+      `    schema pkg=${r.schemaVersions.package} manifest=${r.schemaVersions.manifest} ir=${r.schemaVersions.ir} ` +
+        `profile=${r.schemaVersions.profile} engine=${r.schemaVersions.engine} fp=${r.schemaVersions.fingerprintAlgo}`,
+    );
+    console.log(`    issues: ${Object.entries(bySeverity).map(([k, v]) => `${k}=${v}`).join(" ") || "none"}`);
+    console.log(`    generated ${r.generatedAt} in ${(r.durationMs / 1000).toFixed(1)}s`);
+  }
+  console.log(`\nNo story text, artwork, audio or IR is included above.`);
+  return inst.problems.length === 0 ? 0 : 1;
+}
+
 function openBrowser(url: string): void {
   const cmd =
     process.platform === "darwin" ? "open"
@@ -142,11 +219,14 @@ function openBrowser(url: string): void {
 }
 
 const a = parseArgs(process.argv.slice(2));
-if (!["serve", "prepare", "check"].includes(a.cmd)) usage();
+if (!["serve", "prepare", "check", "diagnostics"].includes(a.cmd)) usage();
 const gameDir = resolveGameDir(a);
 
 if (a.cmd === "check") {
   process.exit(check(gameDir, a));
+}
+if (a.cmd === "diagnostics") {
+  process.exit(diagnostics(gameDir, a));
 }
 
 let prepared: ReturnType<typeof prepareGamePackage>;
