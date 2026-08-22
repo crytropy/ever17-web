@@ -12,6 +12,7 @@ import { resolve } from "node:path";
 import { spawn } from "node:child_process";
 import {
   createAssetMaterializer,
+  digestIndexPath,
   discoverInstallation,
   fingerprintInstallation,
   prepareGamePackage,
@@ -32,6 +33,7 @@ options:
   --port <n>         server port (default 8017)
   --host <addr>      bind address (default 127.0.0.1; keep it local)
   --rebuild          regenerate the package even if the cache is current
+  --verify           rehash every source file instead of trusting the digest index
   --no-open          do not open the browser after the server starts
 
 The generated package (decompiled scenario, converted assets) is derived from
@@ -47,6 +49,7 @@ interface Args {
   port: number;
   host: string;
   rebuild: boolean;
+  verify: boolean;
   open: boolean;
 }
 
@@ -58,6 +61,7 @@ function parseArgs(argv: string[]): Args {
     port: 8017,
     host: "127.0.0.1",
     rebuild: false,
+    verify: false,
     open: true,
   };
   const positional: string[] = [];
@@ -68,6 +72,7 @@ function parseArgs(argv: string[]): Args {
     else if (arg === "--port") a.port = Number(argv[++i] ?? "8017");
     else if (arg === "--host") a.host = argv[++i] ?? a.host;
     else if (arg === "--rebuild") a.rebuild = true;
+    else if (arg === "--verify") a.verify = true;
     else if (arg === "--no-open") a.open = false;
     else if (arg.startsWith("-")) usage();
     else positional.push(arg);
@@ -92,7 +97,7 @@ function resolveGameDir(a: Args): string {
   process.exit(2);
 }
 
-function check(gameDir: string): number {
+function check(gameDir: string, a: Args): number {
   const inst = discoverInstallation(gameDir);
   console.log(`Ever17 installation check: ${gameDir}\n`);
   for (const f of inst.files) {
@@ -112,7 +117,15 @@ function check(gameDir: string): number {
     for (const p of inst.problems) console.log(`  - ${p}`);
     return 1;
   }
-  console.log(`\nOK: ready to import (fingerprint ${fingerprintInstallation(inst)})`);
+  const fp = fingerprintInstallation(inst, {
+    indexPath: digestIndexPath(resolve(a.out)),
+    ...(a.verify ? { verify: true } : {}),
+  });
+  console.log(
+    `\nOK: ready to import (fingerprint ${fp.fingerprint}; ` +
+      `${fp.hashedFiles} file(s) hashed, ${fp.reusedFiles} cached digest(s) reused` +
+      `${a.verify ? ", full verification" : ""})`,
+  );
   return 0;
 }
 
@@ -133,7 +146,7 @@ if (!["serve", "prepare", "check"].includes(a.cmd)) usage();
 const gameDir = resolveGameDir(a);
 
 if (a.cmd === "check") {
-  process.exit(check(gameDir));
+  process.exit(check(gameDir, a));
 }
 
 let prepared: ReturnType<typeof prepareGamePackage>;
@@ -142,6 +155,7 @@ try {
     gameDir,
     outDir: resolve(a.out),
     force: a.rebuild,
+    verify: a.verify,
     branding: EVER17_BRANDING,
     log: (m) => console.log(m),
   });

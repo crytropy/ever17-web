@@ -43,8 +43,12 @@ describe.skipIf(!HAVE_GAME)("installation discovery (real game files)", () => {
     expect(inst.scriptCount).toBeGreaterThan(100);
     const fp1 = fingerprintInstallation(inst);
     const fp2 = fingerprintInstallation(discoverInstallation(GAME_DIR));
-    expect(fp1).toBe(fp2);
-    expect(fp1).toMatch(/^[0-9a-f]{16}$/);
+    expect(fp1.fingerprint).toBe(fp2.fingerprint);
+    expect(fp1.fingerprint).toMatch(/^[0-9a-f]{16}$/);
+    // every source file contributes a content digest, not just the scenario
+    expect(fp1.files.map((f) => f.path)).toContain("script.dat");
+    expect(fp1.files.map((f) => f.path)).toContain("voice.dat");
+    expect(fp1.files.some((f) => f.path.startsWith("movie/"))).toBe(true);
   });
 
   it("refuses a directory that is not an Ever17 installation", () => {

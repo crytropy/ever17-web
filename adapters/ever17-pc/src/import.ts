@@ -47,7 +47,8 @@ import {
   parseWaf,
   pcmToWav,
 } from "e17-assets";
-import { discoverInstallation, fingerprintInstallation, type Ever17Installation } from "./discover.js";
+import { discoverInstallation, type Ever17Installation } from "./discover.js";
+import { fingerprintInstallation, type FingerprintResult } from "./fingerprint.js";
 import { EVER17_GAME_ID, EVER17_PROFILE, EVER17_START_SCENE, EVER17_TITLE } from "./profile.js";
 
 export interface PrepareOptions {
@@ -56,8 +57,15 @@ export interface PrepareOptions {
   outDir: string;
   /** Rebuild even when a package for this fingerprint exists. */
   force?: boolean;
+  /** Rehash every source file instead of trusting the digest index. */
+  verify?: boolean;
   branding?: PlayerBranding;
   log?: (message: string) => void;
+}
+
+/** Digest index location for a cache root (never inside the repository). */
+export function digestIndexPath(outDir: string): string {
+  return join(outDir, "digest-index.json");
 }
 
 export interface PreparedPackage {
@@ -92,7 +100,18 @@ export function prepareGamePackage(opts: PrepareOptions): PreparedPackage {
   const inst = validateInstallation(opts.gameDir);
   for (const w of inst.warnings) log(`warning: ${w}`);
 
-  const fingerprint = fingerprintInstallation(inst);
+  const fp = fingerprintInstallation(inst, {
+    indexPath: digestIndexPath(opts.outDir),
+    ...(opts.verify ? { verify: true } : {}),
+  });
+  const fingerprint = fp.fingerprint;
+  if (fp.hashedFiles > 0) {
+    log(
+      `fingerprint ${fingerprint}: hashed ${fp.hashedFiles} file(s), ` +
+        `${(fp.hashedBytes / 1e9).toFixed(2)} GB` +
+        (fp.reusedFiles ? `, reused ${fp.reusedFiles} cached digest(s)` : ""),
+    );
+  }
   const packageDir = join(opts.outDir, fingerprint);
   const irDir = join(packageDir, "ir");
   const assetsDir = join(packageDir, "assets");

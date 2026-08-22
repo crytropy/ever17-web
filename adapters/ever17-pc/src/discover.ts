@@ -6,7 +6,6 @@
  * e17-assets' ARCHIVES table and the movie/*.e17 containers - not from
  * documentation guesswork.
  */
-import { createHash } from "node:crypto";
 import { closeSync, existsSync, openSync, readSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { ARCHIVES } from "e17-assets";
@@ -139,21 +138,7 @@ export function discoverInstallation(gameDir: string): Ever17Installation {
 }
 
 /**
- * Fingerprint identifying a source installation: content hash of script.dat
- * (what the IR derives from) plus name/size of every asset archive and movie.
- * Cache directories are keyed by this, so an unchanged installation is
- * imported once.
+ * Cache directories are keyed by the installation's content fingerprint, so an
+ * unchanged installation is imported once. See ./fingerprint.ts.
  */
-export function fingerprintInstallation(inst: Ever17Installation): string {
-  const h = createHash("sha256");
-  const scriptPath = join(inst.gameDir, SCRIPT_DAT);
-  if (existsSync(scriptPath)) h.update(readFileSync(scriptPath));
-  for (const f of [...inst.files].sort((a, b) => a.name.localeCompare(b.name))) {
-    h.update(`${f.name}:${f.size};`);
-  }
-  for (const m of inst.movieFiles) {
-    const size = statSync(join(inst.gameDir, "movie", m)).size;
-    h.update(`movie/${m}:${size};`);
-  }
-  return h.digest("hex").slice(0, 16);
-}
+export { fingerprintInstallation } from "./fingerprint.js";
