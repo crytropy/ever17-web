@@ -19,7 +19,7 @@ import {
 } from "kid-contracts";
 import type { StorageLike } from "./config.js";
 
-export const progressKey = (ns: string): string => `${ns}:progress`;
+export const progressKey = (storagePrefix: string): string => `${storagePrefix}:progress`;
 
 /** Storage-backed cross-run progress for one game. */
 export class PersistentProgress {
@@ -27,7 +27,8 @@ export class PersistentProgress {
 
   constructor(
     private readonly storage: StorageLike,
-    private readonly ns: string,
+    /** Storage prefix of the active play-data generation. */
+    private readonly storagePrefix: string,
     private readonly gameId: string,
     private readonly policy: PersistentStatePolicy | null,
   ) {
@@ -47,7 +48,7 @@ export class PersistentProgress {
   private read(): PersistentState {
     const empty = EMPTY_PERSISTENT_STATE(this.gameId);
     try {
-      const raw = this.storage.getItem(progressKey(this.ns));
+      const raw = this.storage.getItem(progressKey(this.storagePrefix));
       if (!raw) return empty;
       const parsed = JSON.parse(raw) as Partial<PersistentState>;
       if (parsed.format !== PERSISTENT_STATE_FORMAT) return empty;
@@ -70,7 +71,7 @@ export class PersistentProgress {
     // Whole-value write: storage sees either the old state or the new one.
     this.state = next;
     try {
-      this.storage.setItem(progressKey(this.ns), JSON.stringify(next));
+      this.storage.setItem(progressKey(this.storagePrefix), JSON.stringify(next));
     } catch {
       /* storage full or unavailable: the run still plays, progress is lost */
     }

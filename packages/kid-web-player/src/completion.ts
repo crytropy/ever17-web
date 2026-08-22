@@ -48,8 +48,12 @@ export class IdbCompletionStore implements CompletionStore {
   private db: Promise<IDBDatabase> | null = null;
   private readonly dbName: string;
 
-  constructor(/** Game storage namespace (GameProfile.storageNamespace). */ ns: string) {
-    this.dbName = `${ns}-completion`;
+  constructor(
+    /** Database name for the active play-data generation
+     * (PlayDataScope.completionDb). */
+    dbName: string,
+  ) {
+    this.dbName = dbName;
   }
 
   private open(): Promise<IDBDatabase> {

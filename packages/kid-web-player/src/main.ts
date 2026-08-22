@@ -24,6 +24,7 @@ import { loadConfig, saveConfig, type VnConfig } from "./config.js";
 import { ALL_SLOTS, AUTO_SLOT, QUICK_SLOT, SaveSlots, type SlotMeta } from "./slots.js";
 import { CompletionTracker, IdbCompletionStore } from "./completion.js";
 import { PersistentProgress } from "./progress.js";
+import { readActiveScope, type PlayDataScope } from "./play-data.js";
 import { applyPlayerDataImport, buildPlayerDataExport, mergeCompletion } from "./transfer.js";
 import { LoadingIndicator } from "./loading-indicator.js";
 import { computeAutoAdvanceDelay } from "./auto-timing.js";
@@ -203,10 +204,12 @@ class WebPlayer {
   private session: GameSession | null = null;
   private stage: PixiStage | null = null;
   private readonly ns: string;
+  /** Active play-data generation: which saves, progress and records are live. */
+  private scope: PlayDataScope;
   private slots: SaveSlots;
   private config: VnConfig;
   /** Cross-run scenario state: what a finished route opens up next time. */
-  private readonly progress: PersistentProgress;
+  private progress: PersistentProgress;
   /** Chapter names from the game's own data; null when it ships none. */
   private catalog: NarrativeProgressCatalog | null = null;
   /** Completion tracking (scenes/choices/endings/assets), separate from saves. */
@@ -241,9 +244,13 @@ class WebPlayer {
     private readonly meta: GamePackageMeta,
   ) {
     this.ns = meta.profile.storageNamespace;
-    this.slots = new SaveSlots(localStorage, this.ns);
+    // Settings live at the namespace; everything gameplay owns lives under
+    // the active play-data generation, so "start completely fresh" is one
+    // pointer move rather than a pile of deletes.
+    this.scope = readActiveScope(localStorage, this.ns);
+    this.slots = new SaveSlots(localStorage, this.scope.storagePrefix);
     this.config = loadConfig(localStorage, this.ns);
-    this.progress = new PersistentProgress(localStorage, this.ns, meta.gameId, meta.persistence ?? null);
+    this.progress = new PersistentProgress(localStorage, this.scope.storagePrefix, meta.gameId, meta.persistence ?? null);
     window.vnAssetsBase = assetsBase;
     textboxEl.addEventListener("click", () => this.advance());
     document.addEventListener("keydown", (e) => {
@@ -660,7 +667,8 @@ class WebPlayer {
       const doc = buildPlayerDataExport(
         {
           storage: localStorage,
-          ns: this.ns,
+          storagePrefix: this.scope.storagePrefix,
+          settingsNamespace: this.ns,
           gameId: this.meta.gameId,
           policy: this.meta.persistence ?? null,
           engineVersion: this.meta.engineVersion,
@@ -703,7 +711,8 @@ class WebPlayer {
     const outcome = applyPlayerDataImport(
       {
         storage: localStorage,
-        ns: this.ns,
+        storagePrefix: this.scope.storagePrefix,
+        settingsNamespace: this.ns,
         gameId: this.meta.gameId,
         policy: this.meta.persistence ?? null,
       },
@@ -722,7 +731,7 @@ class WebPlayer {
     // reload settings and slot listing from the freshly written storage
     this.config = loadConfig(localStorage, this.ns);
     this.applyConfig();
-    this.slots = new SaveSlots(localStorage, this.ns);
+    this.slots = new SaveSlots(localStorage, this.scope.storagePrefix);
     this.openMenu("load");
     toast(`imported ${outcome.slotsRestored} save slot(s)`);
   }
@@ -997,7 +1006,7 @@ class WebPlayer {
     this.stage = await PixiStage.create(pixiParent, this.meta.profile);
     this.stage.onAssetActivity = (pending) => this.loading.update(pending);
     this.stage.onAssetError = (file) => this.noteAssetError(file);
-    this.tracker = await CompletionTracker.open(new IdbCompletionStore(this.ns)).catch(() => null);
+    this.tracker = await CompletionTracker.open(new IdbCompletionStore(this.scope.completionDb)).catch(() => null);
     this.catalog = await fetch("narrative.json")
       .then((r) => (r.ok ? (r.json() as Promise<NarrativeProgressCatalog>) : null))
       .catch(() => null);

@@ -27,19 +27,23 @@ interface StoredSlot {
 }
 
 export class SaveSlots {
-  /** `${ns}:save:<slot>` payloads, `${ns}:slots` index. */
+  /** `<prefix>:save:<slot>` payloads, `<prefix>:slots` index. */
   private readonly prefix: string;
   private readonly indexKey: string;
   private readonly legacyKey: string;
 
   constructor(
     private readonly storage: StorageLike,
-    /** Game storage namespace (GameProfile.storageNamespace). */
-    ns: string,
+    /**
+     * Storage prefix for the active play-data generation
+     * (PlayDataScope.storagePrefix). For generation 0 this is the game
+     * namespace itself, which is why pre-generation saves keep working.
+     */
+    storagePrefix: string,
   ) {
-    this.prefix = `${ns}:save:`;
-    this.indexKey = `${ns}:slots`;
-    this.legacyKey = `${ns}:slot0`;
+    this.prefix = `${storagePrefix}:save:`;
+    this.indexKey = `${storagePrefix}:slots`;
+    this.legacyKey = `${storagePrefix}:slot0`;
     this.migrateLegacy();
   }
 

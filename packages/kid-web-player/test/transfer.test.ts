@@ -32,7 +32,9 @@ function mockStorage(): StorageLike & { map: Map<string, string> } {
 
 const ctx = (storage: StorageLike, policy: PersistentStatePolicy | null = POLICY) => ({
   storage,
-  ns: NS,
+  // generation 0: its prefix is the namespace itself
+  storagePrefix: NS,
+  settingsNamespace: NS,
   gameId: GAME,
   policy,
   engineVersion: "0.7.0",

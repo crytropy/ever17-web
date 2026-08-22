@@ -12,6 +12,7 @@ import type { ExplorationResult } from "kid-graph/exploration-types";
 import type { GamePackageMeta } from "kid-contracts";
 import { DEFAULT_GAME_PROFILE } from "kid-contracts";
 import { CompletionTracker, IdbCompletionStore } from "./completion.js";
+import { readActiveScope } from "./play-data.js";
 
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
 
@@ -28,7 +29,8 @@ async function main(): Promise<void> {
   const exploration = await fetch("exploration.json")
     .then((r) => (r.ok ? (r.json() as Promise<ExplorationResult>) : null))
     .catch(() => null);
-  const tracker = await CompletionTracker.open(new IdbCompletionStore(ns)).catch(() => null);
+  const scope = readActiveScope(localStorage, ns);
+  const tracker = await CompletionTracker.open(new IdbCompletionStore(scope.completionDb)).catch(() => null);
 
   const completion = tracker
     ? { scenes: tracker.scenes, endings: tracker.endings }

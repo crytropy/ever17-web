@@ -22,6 +22,7 @@ import {
   type SceneProgressLabel,
 } from "kid-contracts";
 import { CompletionTracker, IdbCompletionStore } from "./completion.js";
+import { readActiveScope } from "./play-data.js";
 import { SaveSlots } from "./slots.js";
 
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
@@ -174,13 +175,14 @@ async function main(): Promise<void> {
   }
 
   const ns = meta?.profile.storageNamespace ?? "kidvn";
-  const tracker = await CompletionTracker.open(new IdbCompletionStore(ns)).catch(() => null);
+  const scope = readActiveScope(localStorage, ns);
+  const tracker = await CompletionTracker.open(new IdbCompletionStore(scope.completionDb)).catch(() => null);
   const visited = new Set(tracker?.scenes ?? []);
   const collected = new Set(tracker?.endings ?? []);
 
   // "last played" comes from the newest save, so it survives a reload
   try {
-    const slots = new SaveSlots(localStorage, ns);
+    const slots = new SaveSlots(localStorage, scope.storagePrefix);
     const list = slots.list();
     const latest = list.length > 0 ? list.reduce((a, b) => (b.savedAt > a.savedAt ? b : a)) : null;
     if (latest) {
