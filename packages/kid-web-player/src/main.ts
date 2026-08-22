@@ -18,6 +18,7 @@ import { PixiStage } from "kid-renderer-pixi";
 import { loadConfig, saveConfig, type VnConfig } from "./config.js";
 import { ALL_SLOTS, AUTO_SLOT, QUICK_SLOT, SaveSlots, type SlotMeta } from "./slots.js";
 import { CompletionTracker, IdbCompletionStore } from "./completion.js";
+import { PersistentProgress } from "./progress.js";
 import { LoadingIndicator } from "./loading-indicator.js";
 import { matchEndings, type RouteGraphJson } from "kid-graph/model";
 
@@ -197,6 +198,8 @@ class WebPlayer {
   private readonly ns: string;
   private slots: SaveSlots;
   private config: VnConfig;
+  /** Cross-run scenario state: what a finished route opens up next time. */
+  private readonly progress: PersistentProgress;
   /** Completion tracking (scenes/choices/endings/assets), separate from saves. */
   private tracker: CompletionTracker | null = null;
   /** Movies played since the last choice - identifies the ending reached. */
@@ -231,6 +234,7 @@ class WebPlayer {
     this.ns = meta.profile.storageNamespace;
     this.slots = new SaveSlots(localStorage, this.ns);
     this.config = loadConfig(localStorage, this.ns);
+    this.progress = new PersistentProgress(localStorage, this.ns, meta.gameId, meta.persistence ?? null);
     window.vnAssetsBase = assetsBase;
     textboxEl.addEventListener("click", () => this.advance());
     document.addEventListener("keydown", (e) => {
@@ -414,7 +418,13 @@ class WebPlayer {
     const params = new URLSearchParams(location.search);
     const start = params.get("start") ?? this.meta.startScene;
     try {
-      this.session = await GameSession.start(this.source, start, this.sessionOptions());
+      // A new run inherits whatever earlier runs unlocked - that is what
+      // makes later playthroughs different, and it is scenario state, not a
+      // save file.
+      this.session = await GameSession.start(this.source, start, {
+        ...this.sessionOptions(),
+        initialVars: this.progress.seed(),
+      });
     } catch (err) {
       this.showError(`could not start a new game: ${(err as Error).message}`);
       this.showTitle();
@@ -510,6 +520,7 @@ class WebPlayer {
     }
     try {
       const thumb = await this.thumbnail();
+      this.recordProgress();
       const meta = this.slots.put(slot, this.session.save(), thumb);
       toast(`saved ${slot === QUICK_SLOT ? "quicksave" : slot === AUTO_SLOT ? "autosave" : "slot " + slot}: ${meta.label}`);
     } catch (err) {
@@ -537,7 +548,11 @@ class WebPlayer {
     menuEl.classList.add("hidden");
     titleEl.classList.add("hidden");
     try {
-      this.session = await GameSession.restore(this.source, save, this.sessionOptions());
+      this.session = await GameSession.restore(this.source, save, {
+        ...this.sessionOptions(),
+        // an older save must not roll global progression backwards
+        restoreOverrides: this.progress.reconcile(save.vars),
+      });
       this.moviesSinceChoice = [];
       this.moviesPlayed = new Set();
       toast(`loaded: ${save.vm.scene} · line ${save.counters.lines}`);
@@ -791,6 +806,9 @@ class WebPlayer {
         textEl.textContent =
           (ev.reason === "ending" ? "— FIN —" : `— ${ev.reason} —`) + "\n\nTITLE (T) returns to the title screen.";
         hudEl.textContent += " · ended";
+        // The run is over: fold anything it unlocked into global progress
+        // before anything else can replace the session.
+        this.recordProgress();
         if (ev.reason === "ending" && this.tracker) {
           await this.recordEnding(session, ev.scene);
           await this.tracker.flush();
@@ -822,6 +840,13 @@ class WebPlayer {
         this.choiceResolve(ev.options[0]?.index ?? 0);
       }
     });
+  }
+
+  /** Fold the live run's declared cross-run variables into stored progress. */
+  private recordProgress(): void {
+    if (!this.session || !this.progress.enabled) return;
+    const changed = this.progress.record(this.session.vars);
+    if (changed.length > 0) toast("progress recorded");
   }
 
   /** SE assets whose name ends with the profile's loop suffix loop forever. */

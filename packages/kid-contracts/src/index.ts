@@ -30,5 +30,19 @@ export {
   isSupportedIrSchema,
   isCompatibleEngineVersion,
 } from "./compat.js";
+export {
+  PERSISTENT_STATE_FORMAT,
+  PERSISTENT_STATE_VERSION,
+  EMPTY_PERSISTENT_STATE,
+  projectPersistentVars,
+  mergePersistentState,
+  seedFromPersistentState,
+  reconcileSaveWithPersistentState,
+} from "./persistence.js";
+export type {
+  PersistentState,
+  PersistentStatePolicy,
+  PersistentMergeRule,
+} from "./persistence.js";
 export { collectSceneAssets, collectSceneMovies, bgmAssetName } from "./scene-assets.js";
 export type { AssetRef } from "./scene-assets.js";

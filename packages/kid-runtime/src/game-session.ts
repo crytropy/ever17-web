@@ -31,6 +31,22 @@ export { SAVE_FORMAT, SAVE_VERSION } from "kid-contracts/save";
 export type { BacklogEntry, SessionSave } from "kid-contracts/save";
 
 export interface GameSessionOptions {
+  /**
+   * Scenario variables the session starts from, before the first scene runs.
+   *
+   * This is how a game that expects to be played more than once carries
+   * progress into a new run: the host reads its stored cross-run state and
+   * seeds it here. The runtime attaches no meaning to the ids - which
+   * variables persist, and what they mean, is entirely the caller's.
+   */
+  initialVars?: Iterable<readonly [number, number]>;
+  /** Same, for system-space variables. */
+  initialSysVars?: Iterable<readonly [number, number]>;
+  /**
+   * Variables forced on top of a restored save (restore() only). Lets a host
+   * reconcile a save against newer global state without rewriting save files.
+   */
+  restoreOverrides?: Iterable<readonly [number, number]>;
   /** Backlog entries kept in memory and in saves. Default 200. */
   backlogLimit?: number;
   /** Called whenever a new scene is entered (including the first). */
@@ -67,6 +83,8 @@ export class GameSession {
   private constructor(source: AsyncSceneSource, opts: GameSessionOptions) {
     this.source = source;
     this.opts = opts;
+    for (const [id, value] of opts.initialVars ?? []) this.vars.set(id, value);
+    for (const [id, value] of opts.initialSysVars ?? []) this.sysVars.set(id, value);
   }
 
   /** Begin a fresh game at startScene ("New Game"). */
@@ -91,6 +109,9 @@ export class GameSession {
     const s = new GameSession(source, opts);
     for (const [k, v] of save.vars) s.vars.set(k, v);
     for (const [k, v] of save.sysVars) s.sysVars.set(k, v);
+    // Applied last so a host can keep global cross-run progress from being
+    // rolled back by an older save (see reconcileSaveWithPersistentState).
+    for (const [k, v] of opts.restoreOverrides ?? []) s.vars.set(k, v);
     s.lines = save.counters.lines;
     s.route.push(...save.route.slice(0, -1)); // last entry re-added by enterScene
     s.backlog.push(...save.backlog);

@@ -13,6 +13,7 @@
   "dependencies": {
     "e17-assets": "*",
     "e17-parser": "*",
-    "kid-contracts": "*"
+    "kid-contracts": "*",
+    "kid-graph": "*"
   }
 }

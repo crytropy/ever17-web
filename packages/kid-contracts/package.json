@@ -14,7 +14,8 @@
     "./game-package": "./src/game-package.ts",
     "./scene-assets": "./src/scene-assets.ts",
     "./compat": "./src/compat.ts",
-    "./import-report": "./src/import-report.ts"
+    "./import-report": "./src/import-report.ts",
+    "./persistence": "./src/persistence.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

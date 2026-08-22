@@ -26,7 +26,8 @@ const ALLOWED_DEPS: Record<string, string[]> = {
   "kid-web-player": ["kid-contracts", "kid-runtime", "kid-renderer-pixi", "kid-graph", "esbuild"],
   "e17-parser": ["kid-contracts"],
   "e17-assets": ["kid-contracts", "e17-parser"],
-  "ever17-pc": ["kid-contracts", "e17-parser", "e17-assets"],
+  // the adapter runs generic scenario analysis at import time
+  "ever17-pc": ["kid-contracts", "kid-graph", "kid-runtime", "e17-parser", "e17-assets"],
   "ever17-web": ["kid-contracts", "kid-runtime", "kid-renderer-pixi", "kid-graph", "kid-web-player", "ever17-pc", "e17-parser", "e17-assets"],
 };
 

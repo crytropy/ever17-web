@@ -54,9 +54,11 @@ import {
   type ImportReport,
   type IrScene,
   type ManifestEntry,
+  type PersistentStatePolicy,
   type PlayerBranding,
 } from "kid-contracts";
 import { buildCfg, disassemble, encodingForScript, lowerScene, parseLnk, parseSc3 } from "e17-parser";
+import { detectCrossRunVars } from "kid-graph";
 import { AssetLibrary, RAW_PCM_CHANNELS, RAW_PCM_SAMPLE_RATE, parseCpsMeta, parseWaf } from "e17-assets";
 import { discoverInstallation, type Ever17Installation } from "./discover.js";
 import { FINGERPRINT_ALGO, fingerprintInstallation } from "./fingerprint.js";
@@ -472,7 +474,26 @@ function buildPackage(ctx: BuildContext): GamePackageMeta {
     );
   }
 
-  // ---- 4. report + metadata --------------------------------------------
+  // ---- 4. cross-run persistence policy ---------------------------------
+  // Derived from the scenario, not hardcoded: a variable persists when some
+  // scene writes it as a flag and some scene that cannot be reached from
+  // that write reads it - i.e. the write can only matter to a later run.
+  const persistentVars = detectCrossRunVars(scenes, EVER17_START_SCENE);
+  const persistence: PersistentStatePolicy = {
+    policyVersion: 1,
+    vars: [...persistentVars].sort((a, b) => a - b),
+    // progression flags only move forward, so a newer run never loses to an
+    // older save, and loading one cannot roll global progress back
+    merge: "max",
+    derivedFrom: "scenario analysis (cross-run flag detection) at import",
+  };
+  log(
+    persistence.vars.length > 0
+      ? `cross-run progress: ${persistence.vars.length} variable(s) carry into a new game`
+      : `cross-run progress: none detected`,
+  );
+
+  // ---- 5. report + metadata --------------------------------------------
   const report: ImportReport = {
     format: IMPORT_REPORT_FORMAT,
     version: IMPORT_REPORT_VERSION,
@@ -524,6 +545,7 @@ function buildPackage(ctx: BuildContext): GamePackageMeta {
     startScene: EVER17_START_SCENE,
     profile: EVER17_PROFILE,
     paths: { ir: "ir", assets: "assets", movies: "assets/movies" },
+    persistence,
     ...(opts.branding ? { branding: opts.branding } : {}),
     generatedAt: new Date().toISOString(),
     source: { files: inst.files.map((f) => ({ name: f.name, size: f.size })) },

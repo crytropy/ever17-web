@@ -5,6 +5,7 @@
  * copyrighted sources and must never be committed or redistributed.
  */
 import type { GameProfile } from "./profile.js";
+import type { PersistentStatePolicy } from "./persistence.js";
 
 export const GAME_PACKAGE_FORMAT = "kid-game-package";
 export const GAME_PACKAGE_SCHEMA_VERSION = 1;
@@ -41,6 +42,8 @@ export interface GamePackageMeta {
   /** Directories inside the package, relative to game.json. */
   paths: { ir: string; assets: string; movies?: string };
   branding?: PlayerBranding;
+  /** What survives a New Game; derived by the adapter during import. */
+  persistence?: PersistentStatePolicy;
   generatedAt?: string;
   /** Diagnostics: the source files the package was derived from. */
   source?: { files: { name: string; size: number }[] };
