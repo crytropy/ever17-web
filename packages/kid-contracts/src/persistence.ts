@@ -124,3 +124,16 @@ export function reconcileSaveWithPersistentState(
   }
   return out;
 }
+
+/**
+ * Whether a finished run may update global cross-run progress.
+ *
+ * Only a story that actually reached its ending counts. This matters because
+ * a game may write its route-clear flags near the *start* of a long ending
+ * scene: a player who saves there and quits has those flags in their save
+ * file, but has not finished the route, and must not be credited with it.
+ * A run that died on a missing scene or hit the step limit never counts.
+ */
+export function runCountsAsCompletion(reason: string): boolean {
+  return reason === "ending";
+}

@@ -16,6 +16,7 @@ import type { AssetIndex, AssetManifest, ManifestEntry } from "kid-runtime";
 import {
   DEFAULT_GAME_PROFILE,
   labelForScene,
+  runCountsAsCompletion,
   type GamePackageMeta,
   type NarrativeProgressCatalog,
 } from "kid-contracts";
@@ -24,7 +25,14 @@ import { loadConfig, saveConfig, type VnConfig } from "./config.js";
 import { ALL_SLOTS, AUTO_SLOT, QUICK_SLOT, SaveSlots, type SlotMeta } from "./slots.js";
 import { CompletionTracker, IdbCompletionStore } from "./completion.js";
 import { PersistentProgress } from "./progress.js";
-import { readActiveScope, type PlayDataScope } from "./play-data.js";
+import {
+  activePlayDataKey,
+  advanceGeneration,
+  discardGeneration,
+  readActiveGeneration,
+  readActiveScope,
+  type PlayDataScope,
+} from "./play-data.js";
 import { applyPlayerDataImport, buildPlayerDataExport, mergeCompletion } from "./transfer.js";
 import { LoadingIndicator } from "./loading-indicator.js";
 import { computeAutoAdvanceDelay } from "./auto-timing.js";
@@ -95,23 +103,39 @@ function fitStage(): void {
 window.addEventListener("resize", fitStage);
 fitStage();
 
+interface ConfirmOptions {
+  /** Text for the confirming button; defaults to OK. */
+  okLabel?: string;
+  /** An extra, non-committing action offered alongside (e.g. take a backup). */
+  extra?: { label: string; run: () => void | Promise<void> };
+}
+
 /** In-page confirmation in the player's own visual language. */
-function confirmDialog(message: string): Promise<boolean> {
+function confirmDialog(message: string, opts: ConfirmOptions = {}): Promise<boolean> {
   confirmTextEl.textContent = message;
+  const ok = confirmEl.querySelector("#confirm-ok") as HTMLElement;
+  const cancel = confirmEl.querySelector("#confirm-cancel") as HTMLElement;
+  const extraBtn = confirmEl.querySelector("#confirm-extra") as HTMLElement;
+  ok.textContent = opts.okLabel ?? "OK";
+  extraBtn.classList.toggle("hidden", !opts.extra);
+  if (opts.extra) extraBtn.textContent = opts.extra.label;
   confirmEl.classList.remove("hidden");
   return new Promise((resolve) => {
-    const ok = confirmEl.querySelector("#confirm-ok")!;
-    const cancel = confirmEl.querySelector("#confirm-cancel")!;
     const finish = (value: boolean) => (): void => {
       confirmEl.classList.add("hidden");
       ok.removeEventListener("click", yes);
       cancel.removeEventListener("click", no);
+      extraBtn.removeEventListener("click", runExtra);
+      ok.textContent = "OK";
       resolve(value);
     };
     const yes = finish(true);
     const no = finish(false);
+    // the extra action runs without answering the question
+    const runExtra = (): void => void opts.extra?.run();
     ok.addEventListener("click", yes);
     cancel.addEventListener("click", no);
+    extraBtn.addEventListener("click", runExtra);
   });
 }
 
@@ -235,6 +259,9 @@ class WebPlayer {
   );
   /** Assets whose conversion failed, shown in the error banner. */
   private assetErrors = new Set<string>();
+  /** Set when another tab started fresh: this tab must stop writing. */
+  private stale = false;
+  private channel: BroadcastChannel | null = null;
   private auto = false;
   private skip = false;
   private autoTimer: ReturnType<typeof setTimeout> | null = null;
@@ -287,6 +314,12 @@ class WebPlayer {
     titleMenu.load.addEventListener("click", () => this.openMenu("load"));
     titleMenu.settings.addEventListener("click", () => this.openSettings());
     titleMenu.routes.addEventListener("click", () => this.openRecords());
+    settingsEl.querySelector("#cfg-export")!.addEventListener("click", () => void this.exportPlayerData());
+    settingsEl.querySelector("#cfg-import")!.addEventListener("click", () => {
+      (menuEl.querySelector("#menu-file") as HTMLInputElement).click();
+    });
+    settingsEl.querySelector("#cfg-reset")!.addEventListener("click", () => void this.resetPlayData());
+    this.watchOtherTabs();
     errorEl.querySelector("#error-retry")!.addEventListener("click", () => void this.retryAssets());
     errorEl.querySelector("#error-close")!.addEventListener("click", () => this.clearError());
     menuEl.querySelector("#menu-export")!.addEventListener("click", () => void this.exportPlayerData());
@@ -367,6 +400,10 @@ class WebPlayer {
     bind("cfg-se", "seVolume");
     bind("cfg-voice", "voiceVolume");
     bind("cfg-trans", "transitionSpeed");
+    (settingsEl.querySelector("#cfg-reset-note") as HTMLElement).textContent =
+      "Export writes your saves, settings and progress to a file. " +
+      "Starting completely fresh erases saves, records and everything unlocked " +
+      "between playthroughs, but keeps your settings and the converted game files.";
     settingsEl.classList.remove("hidden");
   }
 
@@ -439,6 +476,10 @@ class WebPlayer {
    * that is what the confirmation warns about.
    */
   private async startNewGame(): Promise<void> {
+    if (this.stale) {
+      toast("play data was cleared in another tab - reload to continue");
+      return;
+    }
     const hasAutosave = this.slots.peek(AUTO_SLOT) !== null;
     if (
       hasAutosave &&
@@ -551,13 +592,16 @@ class WebPlayer {
   }
 
   private async saveToSlot(slot: string): Promise<void> {
+    if (this.stale) {
+      toast("play data was cleared in another tab - reload to continue");
+      return;
+    }
     if (!this.session || !this.session.current || this.session.current.type === "sessionEnd") {
       toast("nothing to save");
       return;
     }
     try {
       const thumb = await this.thumbnail();
-      this.recordProgress();
       const meta = this.slots.put(slot, this.session.save(), thumb);
       toast(
         `saved ${slot === QUICK_SLOT ? "quicksave" : slot === AUTO_SLOT ? "autosave" : "slot " + slot}: ` +
@@ -734,6 +778,100 @@ class WebPlayer {
     this.slots = new SaveSlots(localStorage, this.scope.storagePrefix);
     this.openMenu("load");
     toast(`imported ${outcome.slotsRestored} save slot(s)`);
+  }
+
+  /**
+   * Start completely fresh: a first-playthrough state.
+   *
+   * Deliberately separate from New Game, which must keep the unlocks that
+   * make a second playthrough different. The generation pointer moves first
+   * and everything else is cleanup, so an interrupted reset still leaves the
+   * player on empty data rather than half-erased data.
+   */
+  private async resetPlayData(): Promise<void> {
+    const ok = await confirmDialog(
+      "Start completely fresh?\n\n" +
+        "This erases, for this game:\n" +
+        "  · every save slot, the quicksave and the autosave\n" +
+        "  · Continue\n" +
+        "  · route-clear and unlock progress carried between playthroughs\n" +
+        "  · visited chapters, choices and collected endings in RECORDS\n" +
+        "  · the run you are playing now\n\n" +
+        "It keeps:\n" +
+        "  · your Ever17 installation and the converted assets\n" +
+        "  · volume, Auto and transition settings\n\n" +
+        "Export your save data first if you might want it back.",
+      {
+        okLabel: "start fresh",
+        extra: { label: "export first", run: () => this.exportPlayerData() },
+      },
+    );
+    if (!ok) return;
+
+    const previous = this.scope;
+    this.endSession();
+    this.stage?.reset();
+
+    // --- the commit point: one write, and the new world is live
+    this.scope = advanceGeneration(localStorage, this.ns);
+    this.slots = new SaveSlots(localStorage, this.scope.storagePrefix);
+    this.progress = new PersistentProgress(
+      localStorage,
+      this.scope.storagePrefix,
+      this.meta.gameId,
+      this.meta.persistence ?? null,
+    );
+    this.tracker = await CompletionTracker.open(new IdbCompletionStore(this.scope.completionDb)).catch(() => null);
+    this.announceGeneration();
+
+    // --- everything below is housekeeping; failure here is harmless
+    try {
+      discardGeneration(localStorage, this.ns, previous.generation);
+      indexedDB.deleteDatabase(previous.completionDb);
+    } catch {
+      /* the old data is already unreachable */
+    }
+
+    this.showTitle();
+    toast("play data cleared");
+  }
+
+  /** Tell other tabs of this game that their play data is no longer current. */
+  private announceGeneration(): void {
+    try {
+      this.channel?.postMessage({ generation: this.scope.generation });
+    } catch {
+      /* the storage event below still reaches other tabs */
+    }
+  }
+
+  /**
+   * Notice a reset performed in another tab. This tab can only ever write to
+   * its own (now old) generation, so it cannot repopulate the new one - but
+   * it must stop pretending to be a live session.
+   */
+  private watchOtherTabs(): void {
+    const onNewGeneration = (generation: number): void => {
+      if (this.stale || generation <= this.scope.generation) return;
+      this.stale = true;
+      this.endSession();
+      this.stage?.reset();
+      this.showTitle();
+      titleMenu.cont.classList.add("hidden");
+      this.showError("Play data was cleared in another tab. Reload this page to continue.", false);
+    };
+    try {
+      this.channel = new BroadcastChannel(`${this.ns}:playdata`);
+      this.channel.onmessage = (e: MessageEvent<{ generation?: number }>) => {
+        if (typeof e.data?.generation === "number") onNewGeneration(e.data.generation);
+      };
+    } catch {
+      this.channel = null; // no BroadcastChannel: the storage event still works
+    }
+    window.addEventListener("storage", (e) => {
+      if (e.key !== activePlayDataKey(this.ns)) return;
+      onNewGeneration(readActiveGeneration(localStorage, this.ns));
+    });
   }
 
   // ------------------------------------------------ pacing modes
@@ -946,12 +1084,16 @@ class WebPlayer {
         speakerEl.textContent = "";
         textEl.textContent =
           (ev.reason === "ending" ? "— FIN —" : `— ${ev.reason} —`) + "\n\nTITLE (T) returns to the title screen.";
-        // The run is over: fold anything it unlocked into global progress
-        // before anything else can replace the session.
-        this.recordProgress();
-        if (ev.reason === "ending" && this.tracker) {
-          await this.recordEnding(session, ev.scene);
-          await this.tracker.flush();
+        // Only a story that actually reached its ending counts. Ever17
+        // writes some route-clear flags near the *start* of a long ending
+        // scene, so recording them at a save - or when the player quits to
+        // the title inside one - would credit a route they never finished.
+        if (ev.type === "sessionEnd" && runCountsAsCompletion(ev.reason)) {
+          this.recordProgress();
+          if (this.tracker) {
+            await this.recordEnding(session, ev.scene);
+            await this.tracker.flush();
+          }
         }
         return;
       }
@@ -982,9 +1124,12 @@ class WebPlayer {
     });
   }
 
-  /** Fold the live run's declared cross-run variables into stored progress. */
+  /**
+   * Fold the finished run's declared cross-run variables into stored
+   * progress. Called only from a confirmed ending - see the call site.
+   */
   private recordProgress(): void {
-    if (!this.session || !this.progress.enabled) return;
+    if (this.stale || !this.session || !this.progress.enabled) return;
     const changed = this.progress.record(this.session.vars);
     if (changed.length > 0) toast("progress recorded");
   }

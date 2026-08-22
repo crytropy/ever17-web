@@ -38,6 +38,7 @@ export {
   mergePersistentState,
   seedFromPersistentState,
   reconcileSaveWithPersistentState,
+  runCountsAsCompletion,
 } from "./persistence.js";
 export type {
   PersistentState,

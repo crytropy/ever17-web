@@ -18,7 +18,7 @@ import {
   prepareGamePackage,
 } from "ever17-pc";
 import { KID_ENGINE_VERSION, type ImportReport } from "kid-contracts";
-import { EVER17_BRANDING } from "./branding.js";
+import { EVER17_BRANDING, isQaNamespace, qaStorageNamespace } from "./branding.js";
 
 function usage(): never {
   console.log(`ever17 - play Ever17 in the browser from your own installation
@@ -36,6 +36,9 @@ options:
   --host <addr>      bind address (default 127.0.0.1; keep it local)
   --rebuild          regenerate the package even if the cache is current
   --verify           rehash every source file instead of trusting the digest index
+  --qa-profile <id>  serve with an isolated player-data namespace for automated
+                     testing; saves, progress and records made under it never
+                     appear in the ordinary player's profile
   --no-open          do not open the browser after the server starts
 
 The generated package (decompiled scenario, converted assets) is derived from
@@ -52,6 +55,7 @@ interface Args {
   host: string;
   rebuild: boolean;
   verify: boolean;
+  qaProfile: string | null;
   open: boolean;
 }
 
@@ -64,6 +68,7 @@ function parseArgs(argv: string[]): Args {
     host: "127.0.0.1",
     rebuild: false,
     verify: false,
+    qaProfile: null,
     open: true,
   };
   const positional: string[] = [];
@@ -75,6 +80,7 @@ function parseArgs(argv: string[]): Args {
     else if (arg === "--host") a.host = argv[++i] ?? a.host;
     else if (arg === "--rebuild") a.rebuild = true;
     else if (arg === "--verify") a.verify = true;
+    else if (arg === "--qa-profile") a.qaProfile = argv[++i] ?? null;
     else if (arg === "--no-open") a.open = false;
     else if (arg.startsWith("-")) usage();
     else positional.push(arg);
@@ -279,15 +285,30 @@ summarize(prepared);
 
 // serve
 const { serve } = await import("kid-web-player/serve");
+// A QA run gets its own player-data namespace. The package on disk is
+// untouched; only the metadata the browser reads is swapped, which moves
+// saves, cross-run progress and the completion database together.
+const servedMeta = a.qaProfile
+  ? {
+      ...prepared.meta,
+      profile: { ...prepared.meta.profile, storageNamespace: qaStorageNamespace(a.qaProfile) },
+    }
+  : prepared.meta;
+if (a.qaProfile) {
+  console.log(
+    `\nQA profile "${a.qaProfile}": player data is isolated under ` +
+      `"${servedMeta.profile.storageNamespace}" and will not touch the ordinary profile.`,
+  );
+}
 serve({
   irDir: prepared.irDir,
   assetsDir: prepared.assetsDir,
-  meta: prepared.meta,
+  meta: servedMeta,
   port: a.port,
   host: a.host,
   materializeAsset: createAssetMaterializer(gameDir, prepared.assetsDir),
   onReady: (url) => {
-    console.log(`\nEver17 is ready: ${url} (starts at New Game)`);
+    console.log(`\nEver17 is ready: ${url}${isQaNamespace(servedMeta.profile.storageNamespace) ? " (QA profile)" : ""}`);
     if (a.open) openBrowser(url);
   },
 });

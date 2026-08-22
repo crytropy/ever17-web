@@ -8,7 +8,9 @@ import { detectCrossRunVars } from "kid-graph";
 import {
   EMPTY_PERSISTENT_STATE,
   mergePersistentState,
+  runCountsAsCompletion,
   seedFromPersistentState,
+  type PersistentState,
   type PersistentStatePolicy,
 } from "kid-contracts";
 import { EVER17_GAME_ID, EVER17_START_SCENE } from "../src/profile.js";
@@ -118,6 +120,60 @@ describe.skipIf(!HAVE_IR)("cross-run progression (real scenario)", () => {
     };
     const stored = mergePersistentState(policy, EMPTY_PERSISTENT_STATE(EVER17_GAME_ID), full);
     expect(new Map(seedFromPersistentState(policy, stored)).get(gate!)).toBe(1);
+  });
+
+  it("saving inside an unfinished ending does not clear the route", async () => {
+    // Ever17 writes route-clear flags near the START of its ending scene, so
+    // a save taken there already contains them. Crediting the route at save
+    // time would hand the player a clear they never finished.
+    const derived = [...detectCrossRunVars(scenesOf(), EVER17_START_SCENE)].sort((a, b) => a - b);
+    const policy: PersistentStatePolicy = { policyVersion: 1, vars: derived, merge: "max", derivedFrom: "test" };
+    const source = { load: (n: string) => fsSceneSource(IR_DIR).load(n), assets: () => NULL_ASSETS };
+
+    const session = await GameSession.start(source, "y_ed", {});
+    let sawFlag = false;
+    let end: { type: string; reason?: string } | null = null;
+    for (let i = 0; i < 20_000; i += 1) {
+      const ev = await session.next();
+      if (ev.type === "sessionEnd") {
+        end = ev;
+        break;
+      }
+      if (ev.type === "choice") session.choose(ev.options.find((o) => o.enabled)?.index ?? 0);
+      if (derived.some((v) => (session.vars.get(v) ?? 0) > 0)) {
+        sawFlag = true;
+        break; // the player quits here, mid-ending
+      }
+    }
+    expect(sawFlag, "the ending scene should set a clear flag before it finishes").toBe(true);
+    expect(end, "we stopped before the run ended").toBeNull();
+
+    // the save really does carry the flag...
+    const save = session.save();
+    expect(save.vars.some(([id, value]) => derived.includes(id) && value > 0)).toBe(true);
+
+    // ...but quitting is not a completion, so nothing is credited
+    let stored: PersistentState = EMPTY_PERSISTENT_STATE(EVER17_GAME_ID);
+    for (const reason of ["missing-scene", "stepLimit"]) {
+      expect(runCountsAsCompletion(reason)).toBe(false);
+    }
+    expect(seedFromPersistentState(policy, stored)).toEqual([]);
+
+    // finish the run properly and it counts
+    const finisher = await GameSession.start(source, "y_ed", {});
+    let finished: string | null = null;
+    for (let i = 0; i < 200_000; i += 1) {
+      const ev = await finisher.next();
+      if (ev.type === "sessionEnd") {
+        finished = ev.reason;
+        break;
+      }
+      if (ev.type === "choice") finisher.choose(ev.options.find((o) => o.enabled)?.index ?? 0);
+    }
+    expect(finished).toBe("ending");
+    expect(runCountsAsCompletion(finished!)).toBe(true);
+    stored = mergePersistentState(policy, stored, finisher.vars);
+    expect(seedFromPersistentState(policy, stored).length).toBeGreaterThan(0);
   });
 
   it("a seeded New Game really starts with the inherited state", async () => {

@@ -36,3 +36,23 @@ export function ever17PackageMeta(overrides: Partial<GamePackageMeta> = {}): Gam
     ...overrides,
   };
 }
+
+/**
+ * Storage namespace for an isolated QA profile.
+ *
+ * Automated browser runs must never write into the namespace a real player
+ * uses: a test that records an ending or a route-clear flag would show up in
+ * their Continue button and RECORDS screen, and cross-run progress is exactly
+ * the kind of state that is hard to notice and hard to undo. Serving with
+ * --qa-profile swaps the namespace in the metadata the browser sees, which
+ * moves saves, progress and the completion database together.
+ */
+export function qaStorageNamespace(profile: string): string {
+  const slug = profile.trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "");
+  return `${EVER17_PROFILE.storageNamespace}-qa-${slug || "unnamed"}`;
+}
+
+/** True when a namespace belongs to a QA profile rather than a real player. */
+export function isQaNamespace(ns: string): boolean {
+  return ns.startsWith(`${EVER17_PROFILE.storageNamespace}-qa-`);
+}

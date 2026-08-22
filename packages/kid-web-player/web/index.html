@@ -122,6 +122,13 @@
     color:#9fc3ff; border:1px solid #445; border-radius:4px; cursor:pointer;
   }
   .menu-actions button:hover { border-color:#9fc3ff; }
+  .menu-actions button.danger { color:#ffc9c9; border-color:#6b3b3b; }
+  .menu-actions button.danger:hover { border-color:#d98a8a; background:rgba(70,20,20,.7); }
+  .cfg-section {
+    margin:20px 0 8px; color:#9fc3ff; font-size:12px; letter-spacing:.24em;
+    border-top:1px solid rgba(160,190,255,.2); padding-top:14px;
+  }
+  .cfg-note { color:#7f93bb; font-size:11px; line-height:1.6; margin:8px 0 0; }
   #menu-close, #settings-close {
     margin-top:14px; font:13px monospace; padding:5px 16px; background:rgba(20,30,60,.85);
     color:#9fc3ff; border:1px solid #445; border-radius:4px; cursor:pointer;
@@ -194,6 +201,7 @@
     <div id="confirm-text"></div>
     <div class="confirm-actions">
       <button id="confirm-ok">OK</button>
+      <button id="confirm-extra" class="hidden">extra</button>
       <button id="confirm-cancel">cancel</button>
     </div>
   </div>
@@ -224,6 +232,13 @@
         <option value="slow">Slow</option>
       </select><span></span></div>
     <div class="cfg-row"><label>Transition speed</label><input id="cfg-trans" type="range" min="0" max="4" step="0.25"><span></span></div>
+    <div class="cfg-section">PLAYER DATA</div>
+    <div class="menu-actions">
+      <button id="cfg-export">export save data</button>
+      <button id="cfg-import">import save data</button>
+      <button id="cfg-reset" class="danger">start completely fresh</button>
+    </div>
+    <p class="cfg-note" id="cfg-reset-note"></p>
     <button id="settings-close">close</button>
   </div>
 </div>
