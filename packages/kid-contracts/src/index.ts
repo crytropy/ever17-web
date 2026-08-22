@@ -13,5 +13,22 @@ export {
   KID_ENGINE_VERSION,
 } from "./game-package.js";
 export type { GamePackageMeta, PlayerBranding } from "./game-package.js";
+export {
+  IMPORT_REPORT_FORMAT,
+  IMPORT_REPORT_VERSION,
+} from "./import-report.js";
+export type { ImportReport, ImportIssue, ImportSeverity } from "./import-report.js";
+export {
+  SUPPORTED_PACKAGE_SCHEMA_VERSIONS,
+  SUPPORTED_MANIFEST_SCHEMA_VERSIONS,
+  SUPPORTED_PROFILE_VERSIONS,
+  SUPPORTED_IR_SCHEMA_VERSIONS,
+  isSupportedPackageFormat,
+  isSupportedPackageSchema,
+  isSupportedManifestSchema,
+  isSupportedProfileVersion,
+  isSupportedIrSchema,
+  isCompatibleEngineVersion,
+} from "./compat.js";
 export { collectSceneAssets, collectSceneMovies, bgmAssetName } from "./scene-assets.js";
 export type { AssetRef } from "./scene-assets.js";

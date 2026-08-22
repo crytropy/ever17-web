@@ -50,6 +50,13 @@ export interface GameProfile {
   endingScenePatterns: string[];
   /** Prefix for browser storage keys and databases (must be per-game unique). */
   storageNamespace: string;
+  /**
+   * Case-insensitive regex sources matching scripts that are UI or developer
+   * tooling rather than story content. Import diagnostics use this to tell
+   * "a background the player will see is missing" from "a debug menu
+   * references something the release does not ship".
+   */
+  nonStoryScenePatterns?: string[];
   /** Presentation effect interpretation; absent = record only, draw nothing. */
   effects?: EffectProfile;
 }

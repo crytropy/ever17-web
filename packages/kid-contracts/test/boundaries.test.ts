@@ -54,7 +54,9 @@ function sourceFiles(dir: string): string[] {
 }
 
 function importsOf(file: string): string[] {
-  const text = readFileSync(file, "utf8");
+  // comments are stripped first: prose like `distinguish "x" from "y"` is not
+  // an import, and scanning it produced false violations
+  const text = stripComments(readFileSync(file, "utf8"));
   const specs: string[] = [];
   const re = /(?:from\s+|import\s*\(\s*|import\s+)["']([^"']+)["']/g;
   for (const m of text.matchAll(re)) specs.push(m[1]!);
@@ -69,7 +71,10 @@ function rootPackage(spec: string): string | null {
 }
 
 function stripComments(ts: string): string {
-  return ts.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  return ts
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    // line comments, but not the "//" inside a URL such as https://...
+    .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
 }
 
 describe("package dependency boundaries", () => {

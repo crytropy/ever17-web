@@ -37,6 +37,13 @@ export const EVER17_PROFILE: GameProfile = {
    */
   storageNamespace: "e17vn",
   /**
+   * Non-story scripts in the release: the 20 debug_* developer menus, the
+   * title screen (startup.scr) and the system/UI script. Assets that only
+   * these reference - e.g. the 11 v_<name> voice clips system.scr names but
+   * the release does not ship - are import warnings, not defects.
+   */
+  nonStoryScenePatterns: ["^debug", "^startup$", "^system$"],
+  /**
    * Effect-id interpretation for the Pixi renderer. Only ids reachable during
    * full-route playback are mapped; all are labelled approximations of the
    * original engine's behaviour (see sc3-format.md).

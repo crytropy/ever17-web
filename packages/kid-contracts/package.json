@@ -12,7 +12,9 @@
     "./save": "./src/save.ts",
     "./profile": "./src/profile.ts",
     "./game-package": "./src/game-package.ts",
-    "./scene-assets": "./src/scene-assets.ts"
+    "./scene-assets": "./src/scene-assets.ts",
+    "./compat": "./src/compat.ts",
+    "./import-report": "./src/import-report.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

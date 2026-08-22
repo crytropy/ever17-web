@@ -8,7 +8,7 @@
  *   npm run ever17 -- serve --game-dir "/path/to/Ever17"
  */
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import {
   createAssetMaterializer,
@@ -164,13 +164,38 @@ try {
   process.exit(1);
 }
 
+/** One-line summary of what the package contains, from its import report. */
+function summarize(p: typeof prepared): void {
+  const r = p.report;
+  if (!r) return;
+  console.log(
+    `\npackage ${p.meta.sourceFingerprint}: ${r.scripts.decompiled} scripts, ` +
+      `${r.assets.indexed} assets, ${r.movies.converted}/${r.movies.referenced} movies` +
+      `${p.reused ? " (reused)" : ""}`,
+  );
+  if (r.assets.missingStory > 0) {
+    console.log(`  ${r.assets.missingStory} asset(s) reachable in play are missing - see import-report.json`);
+  }
+  if (r.assets.missingSystem > 0) {
+    console.log(`  ${r.assets.missingSystem} missing asset(s) are system/UI-only (harmless)`);
+  }
+  if (r.movies.missingSource + r.movies.unconverted > 0) {
+    console.log(
+      `  ${r.movies.missingSource + r.movies.unconverted} movie(s) unavailable - a text placeholder is shown`,
+    );
+  }
+  console.log(`  report: ${join(p.packageDir, "import-report.json")}`);
+}
+
 if (a.cmd === "prepare") {
+  summarize(prepared);
   console.log(
     `\nDone. Play it with:\n  npm run ever17 -- serve --game-dir "${gameDir}"` +
       (a.out !== ".local/ever17" ? ` --out "${a.out}"` : ""),
   );
   process.exit(0);
 }
+summarize(prepared);
 
 // serve
 const { serve } = await import("kid-web-player/serve");

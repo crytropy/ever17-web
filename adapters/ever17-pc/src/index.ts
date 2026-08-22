@@ -18,5 +18,9 @@ export {
   prepareGamePackage,
   validateInstallation,
   createAssetMaterializer,
+  promoteDirectory,
+  cleanupAbandonedBuilds,
 } from "./import.js";
 export type { PrepareOptions, PreparedPackage } from "./import.js";
+export { validateCachedPackage } from "./cache.js";
+export type { CacheValidation, CacheExpectation } from "./cache.js";

@@ -10,7 +10,7 @@ export const GAME_PACKAGE_FORMAT = "kid-game-package";
 export const GAME_PACKAGE_SCHEMA_VERSION = 1;
 
 /** Version of the Web KID Engine that generated a package. */
-export const KID_ENGINE_VERSION = "0.6.0";
+export const KID_ENGINE_VERSION = "0.7.0";
 
 /** Player-facing branding; owned by the product app, not the engine. */
 export interface PlayerBranding {
