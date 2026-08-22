@@ -1,4 +1,6 @@
 import { SceneVm, type VmOptions, type VmSaveState } from "./vm.js";
+import { SAVE_FORMAT, SAVE_VERSION } from "kid-contracts/save";
+import type { BacklogEntry, SessionSave } from "kid-contracts/save";
 import type {
   AssetIndex,
   ChoiceEvent,
@@ -25,28 +27,8 @@ export interface AsyncSceneSource {
   assets(name: string): AssetIndex;
 }
 
-export interface BacklogEntry {
-  scene: string;
-  speaker: string | null;
-  text: string;
-  voice: string | null;
-  voiceFile: string | null;
-}
-
-export const SAVE_FORMAT = "e17vn-save";
-export const SAVE_VERSION = 1;
-
-/** Serializable session state. */
-export interface SessionSave {
-  format: typeof SAVE_FORMAT;
-  version: typeof SAVE_VERSION;
-  vm: VmSaveState;
-  vars: [number, number][];
-  sysVars: [number, number][];
-  counters: { lines: number; scenes: number };
-  route: string[];
-  backlog: BacklogEntry[];
-}
+export { SAVE_FORMAT, SAVE_VERSION } from "kid-contracts/save";
+export type { BacklogEntry, SessionSave } from "kid-contracts/save";
 
 export interface GameSessionOptions {
   /** Backlog entries kept in memory and in saves. Default 200. */

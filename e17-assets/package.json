@@ -10,7 +10,14 @@
     "./waf": "./src/waf/index.ts",
     "./scene-assets": "./src/scene-assets.ts"
   },
-  "bin": { "e17-assets": "./src/cli.ts" },
-  "scripts": { "typecheck": "tsc --noEmit" },
-  "dependencies": { "e17-parser": "*" }
+  "bin": {
+    "e17-assets": "./src/cli.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "e17-parser": "*",
+    "kid-contracts": "*"
+  }
 }

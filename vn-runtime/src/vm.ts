@@ -1,4 +1,5 @@
 import { evaluateCondition, MOD_ADD, MOD_ASSIGN } from "./conditions.js";
+import type { VmSaveState } from "kid-contracts/save";
 import type {
   AssetIndex,
   ChoiceEvent,
@@ -62,26 +63,7 @@ export interface ChoiceDecision {
   option: number;
 }
 
-/**
- * Serializable snapshot of one SceneVm, taken at an event boundary: restoring
- * it re-presents the same event with the same presentation state, and the
- * continuation is identical to an uninterrupted run (pinned by tests).
- */
-export interface VmSaveState {
-  scene: string;
-  /** Block/op index of the op that produced the currently presented event. */
-  block: string;
-  pc: number;
-  steps: number;
-  presentation: {
-    background: LayerState | null;
-    sprites: [number, LayerState][];
-    bgm: string | null;
-    fill: number | null;
-  };
-  /** Presentation deltas of the presented event (re-attached on resume). */
-  actions?: PresentationAction[];
-}
+export type { VmSaveState } from "kid-contracts/save";
 
 /**
  * Data-driven interpreter over a decompiled scene.

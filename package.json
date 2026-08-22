@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "workspaces": [
+    "packages/*",
     "e17-parser",
     "e17-assets",
     "vn-runtime",

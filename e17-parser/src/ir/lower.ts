@@ -7,7 +7,7 @@ import {
   type TextToken,
 } from "../sc3/text.js";
 import type { Disassembly, Instruction, Operand, RawExpr, Sc3File } from "../sc3/types.js";
-import type { IrBlock, IrCondition, IrOp, IrScene, IrValue } from "./types.js";
+import { IR_SCHEMA_VERSION, type IrBlock, type IrCondition, type IrOp, type IrScene, type IrValue } from "./types.js";
 
 const label = (addr: number): string => addr.toString(16).toUpperCase().padStart(8, "0");
 
@@ -268,6 +268,7 @@ export function lowerScene(
     : disasm.instructions[0]?.address ?? file.codeRegionStart;
 
   return {
+    formatVersion: IR_SCHEMA_VERSION,
     scene: file.name.replace(/\.scr$/i, ""),
     entry: label(entryAddr),
     blocks,

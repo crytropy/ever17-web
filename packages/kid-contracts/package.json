@@ -1,0 +1,20 @@
+{
+  "name": "kid-contracts",
+  "version": "0.1.0",
+  "description": "Web KID Engine: versioned, JSON-safe contracts shared by the engine, adapters and tools",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts",
+    "./ir": "./src/ir.ts",
+    "./manifest": "./src/manifest.ts",
+    "./presentation": "./src/presentation.ts",
+    "./save": "./src/save.ts",
+    "./profile": "./src/profile.ts",
+    "./game-package": "./src/game-package.ts",
+    "./scene-assets": "./src/scene-assets.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}

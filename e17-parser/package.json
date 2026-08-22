@@ -16,5 +16,8 @@
   "scripts": {
     "e17": "tsx src/cli.ts",
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "kid-contracts": "*"
   }
 }
