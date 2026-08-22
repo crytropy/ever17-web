@@ -20,9 +20,14 @@ export interface SceneProgressLabel {
   /** Short, player-facing name, e.g. a viewpoint and day. */
   shortLabel: string;
   kind: SceneProgressKind;
-  /** Perspective the chapter is told from, when the game distinguishes one. */
+  /**
+   * Perspective the chapter is told from, as a stable id into `viewpoints`.
+   * Ids are never built from display names: those are localized and change.
+   */
+  viewpointId?: string;
+  /** Display name of that perspective (denormalized for convenience). */
   viewpoint?: string;
-  /** Route this scene belongs to (id into `routes`). */
+  /** Route this scene belongs to: a stable id into `routes`. */
   routeId?: string;
   /** In-story day number, when the source labels one. */
   day?: number;
@@ -34,9 +39,13 @@ export interface SceneProgressLabel {
 }
 
 export interface RouteProgressDefinition {
+  /** Stable id, e.g. "common-takeshi"; never derived from a display name. */
   id: string;
   /** Player-facing route name. */
   name: string;
+  /** Stable id of the viewpoint this route is told from. */
+  viewpointId?: string;
+  /** Display name of that viewpoint. */
   viewpoint?: string;
   /** True for the shared opening chapters rather than a character's route. */
   common?: boolean;
@@ -58,10 +67,19 @@ export interface EndingProgressDefinition {
   order?: number;
 }
 
+/** A perspective the story is told from. */
+export interface ViewpointDefinition {
+  id: string;
+  name: string;
+  order?: number;
+}
+
 export interface NarrativeProgressCatalog {
   format: typeof NARRATIVE_CATALOG_FORMAT;
   version: typeof NARRATIVE_CATALOG_VERSION;
   gameId: string;
+  /** Perspectives, in presentation order. */
+  viewpoints?: ViewpointDefinition[];
   /** Label for a scene with no entry at all. */
   fallbackLabel: string;
   /** Scene name (lowercase) -> label. */

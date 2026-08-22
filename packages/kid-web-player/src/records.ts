@@ -34,61 +34,115 @@ const el = (tag: string, className?: string, text?: string): HTMLElement => {
   return node;
 };
 
-interface DiscoveredRoute {
+export interface DiscoveredRoute {
+  /** Stable route id from the catalog. */
   routeId: string;
   name: string;
   /** Visited days, ascending; empty when the route has no day structure. */
   days: number[];
-  /** Visited chapters with no day (epilogues, endings). */
+  /** Visited chapters with no day of their own (epilogues, the finale). */
   extras: string[];
   order: number;
 }
 
-/** Group the scenes a player has actually visited into viewpoints and routes. */
-function discovered(
+export interface DiscoveredViewpoint {
+  /** Stable viewpoint id, or "" for chapters that belong to no viewpoint. */
+  viewpointId: string;
+  name: string;
+  routes: DiscoveredRoute[];
+}
+
+/**
+ * Group the scenes a player has actually visited into viewpoints and routes.
+ *
+ * This is the disclosure rule: only visited scenes contribute, and a scene
+ * with no chapter name (a system or developer script) contributes nothing. A
+ * route the player has never entered therefore cannot appear, however much
+ * the imported catalog knows about it.
+ *
+ * Exported and pure so the rule itself can be tested, rather than a
+ * re-implementation of it.
+ */
+export function groupDiscoveredChapters(
   catalog: NarrativeProgressCatalog,
-  visited: ReadonlySet<string>,
-): Map<string, DiscoveredRoute[]> {
-  const byViewpoint = new Map<string, Map<string, DiscoveredRoute>>();
+  visited: Iterable<string>,
+): DiscoveredViewpoint[] {
+  const byViewpoint = new Map<string, DiscoveredViewpoint>();
+  const routeOf = new Map(catalog.routes.map((r) => [r.id, r]));
+  const viewpointName = new Map((catalog.viewpoints ?? []).map((v) => [v.id, v.name]));
+
   for (const scene of visited) {
     const label: SceneProgressLabel | undefined = catalog.scenes[scene.toLowerCase()];
-    // A visited scene with no chapter name is not story content (system or
-    // developer scripts) and never appears here.
     if (!label || label.kind === "other") continue;
-    const viewpoint = label.viewpoint ?? "";
+
+    const viewpointId = label.viewpointId ?? "";
     // Chapters that belong to no viewpoint and no route (the opening, the
     // finale) each stand on their own row rather than sharing one.
-    const routeId = label.routeId ?? (viewpoint ? "unknown" : label.shortLabel);
-    const routeName =
-      catalog.routes.find((r) => r.id === routeId || r.id === `${routeId}-${viewpointId(viewpoint)}`)?.name ??
-      (label.routeId ? label.shortLabel.split(" · ")[0]! : label.shortLabel);
+    const routeId = label.routeId ?? (viewpointId ? `${viewpointId}-unknown` : label.shortLabel);
+    const routeName = routeOf.get(routeId)?.name ?? label.shortLabel;
 
-    let routes = byViewpoint.get(viewpoint);
-    if (!routes) byViewpoint.set(viewpoint, (routes = new Map()));
-    let route = routes.get(routeId);
+    let group = byViewpoint.get(viewpointId);
+    if (!group) {
+      byViewpoint.set(viewpointId, (group = {
+        viewpointId,
+        name: viewpointName.get(viewpointId) ?? label.viewpoint ?? "",
+        routes: [],
+      }));
+    }
+    let route = group.routes.find((r) => r.routeId === routeId);
     if (!route) {
-      routes.set(routeId, (route = { routeId, name: routeName, days: [], extras: [], order: routes.size }));
+      route = { routeId, name: routeName, days: [], extras: [], order: group.routes.length };
+      group.routes.push(route);
     }
     if (label.day !== undefined) {
       if (!route.days.includes(label.day)) route.days.push(label.day);
     } else if (label.shortLabel !== route.name && !route.extras.includes(label.shortLabel)) {
-      // a chapter with no day of its own (an epilogue, the finale); skip it
-      // when it would just repeat the row's own name
       route.extras.push(label.shortLabel);
     }
   }
-  const out = new Map<string, DiscoveredRoute[]>();
-  for (const [viewpoint, routes] of byViewpoint) {
-    const list = [...routes.values()].sort((a, b) => a.order - b.order);
-    for (const r of list) r.days.sort((a, b) => a - b);
-    out.set(viewpoint, list);
+
+  const groups = [...byViewpoint.values()];
+  for (const g of groups) {
+    g.routes.sort((a, b) => a.order - b.order);
+    for (const r of g.routes) r.days.sort((a, b) => a - b);
   }
-  return out;
+  return groups;
 }
 
-/** Stable-ish id for a viewpoint display name, for route lookups. */
-function viewpointId(name: string): string {
-  return name;
+export interface EndingCard {
+  /** Present only once collected; a locked card carries no name. */
+  name: string | null;
+  collected: boolean;
+  endingId?: string;
+}
+
+/**
+ * Ending cards for the records screen: the game's own roster in order, each
+ * named only once the player has collected it, plus anything collected that
+ * the roster never listed.
+ */
+export function endingCardsFor(
+  catalog: NarrativeProgressCatalog,
+  collected: Iterable<string>,
+): EndingCard[] {
+  const collectedIds = [...collected];
+  const resolved = new Set(
+    collectedIds.map((id) => endingById(catalog, id)?.id).filter((id): id is string => id !== undefined),
+  );
+  const cards: EndingCard[] = catalog.endings.map((e) => ({
+    name: resolved.has(e.id) ? e.name : null,
+    collected: resolved.has(e.id),
+    endingId: e.id,
+  }));
+  for (const id of collectedIds) {
+    if (endingById(catalog, id)) continue; // already in the roster
+    const label = labelForScene(catalog, id);
+    cards.push({
+      name: label.shortLabel !== catalog.fallbackLabel ? label.shortLabel : "结局",
+      collected: true,
+    });
+  }
+  return cards;
 }
 
 function renderChapters(
@@ -97,21 +151,20 @@ function renderChapters(
   visited: ReadonlySet<string>,
 ): void {
   content.appendChild(el("h2", undefined, "篇章"));
-  const groups = discovered(catalog, visited);
-  if (groups.size === 0) {
+  const groups = groupDiscoveredChapters(catalog, visited);
+  if (groups.length === 0) {
     content.appendChild(el("p", "empty", "还没有可记录的进度。开始新游戏后，走过的篇章会出现在这里。"));
     return;
   }
-  for (const [viewpoint, routes] of groups) {
+  for (const group of groups) {
     const section = el("section", "viewpoint");
-    section.appendChild(el("div", "name", viewpoint || "　"));
-    for (const route of routes) {
+    section.appendChild(el("div", "name", group.name || "　"));
+    for (const route of group.routes) {
       const row = el("div", "route");
       row.appendChild(el("span", "rname", route.name));
       const days = el("div", "days");
       for (const d of route.days) days.appendChild(el("span", "day", `第${d}日`));
       for (const extra of route.extras) {
-        // an epilogue or finale: show its own name, it has no day number
         days.appendChild(el("span", "day", extra.split(" · ").slice(-1)[0]!));
       }
       row.appendChild(days);
@@ -128,32 +181,13 @@ function renderEndings(
 ): void {
   content.appendChild(el("h2", undefined, "结局"));
   const cards = el("div", "cards");
-
-  const matched = new Set<string>();
-  for (const ending of catalog.endings) {
-    const got = [...collected].some((id) => endingById(catalog, id)?.id === ending.id);
-    if (got) matched.add(ending.id);
-    const card = el("div", got ? "card" : "card locked");
-    card.tabIndex = 0;
-    card.appendChild(el("div", "title", got ? ending.name : "?????"));
-    card.appendChild(el("div", "meta", got ? "已收录" : "未收录"));
-    cards.appendChild(card);
+  for (const card of endingCardsFor(catalog, collected)) {
+    const node = el("div", card.collected ? "card" : "card locked");
+    node.tabIndex = 0;
+    node.appendChild(el("div", "title", card.name ?? "?????"));
+    node.appendChild(el("div", "meta", card.collected ? "已收录" : "未收录"));
+    cards.appendChild(node);
   }
-
-  // Anything collected that the roster does not list - the game can end in
-  // ways its own menu never enumerated. Shown only once reached.
-  for (const id of collected) {
-    const known = endingById(catalog, id);
-    if (known && matched.has(known.id)) continue;
-    if (known) continue;
-    const label = labelForScene(catalog, id);
-    const card = el("div", "card");
-    card.tabIndex = 0;
-    card.appendChild(el("div", "title", label.shortLabel !== catalog.fallbackLabel ? label.shortLabel : "结局"));
-    card.appendChild(el("div", "meta", "已收录"));
-    cards.appendChild(card);
-  }
-
   content.appendChild(cards);
 }
 
@@ -196,4 +230,6 @@ async function main(): Promise<void> {
   renderEndings(content, catalog, collected);
 }
 
-void main();
+// Only boot the page in a browser: this module also exports the pure
+// disclosure rules, which tests import without wanting a page.
+if (typeof document !== "undefined") void main();

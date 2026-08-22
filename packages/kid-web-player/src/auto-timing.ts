@@ -86,15 +86,25 @@ export function stripFormatting(text: string): string {
  * it exists; the fallback iterates code points, which is still far better
  * than `.length` for anything outside the BMP.
  */
-export function countGraphemes(text: string): number {
-  const Segmenter = (Intl as { Segmenter?: new (l?: string, o?: { granularity: string }) => { segment(s: string): Iterable<unknown> } })
-    .Segmenter;
+export function segmentGraphemes(text: string): string[] {
+  const Segmenter = (
+    Intl as {
+      Segmenter?: new (
+        l?: string,
+        o?: { granularity: string },
+      ) => { segment(s: string): Iterable<{ segment: string }> };
+    }
+  ).Segmenter;
   if (Segmenter) {
-    let n = 0;
-    for (const _ of new Segmenter(undefined, { granularity: "grapheme" }).segment(text)) n += 1;
-    return n;
+    const out: string[] = [];
+    for (const s of new Segmenter(undefined, { granularity: "grapheme" }).segment(text)) out.push(s.segment);
+    return out;
   }
-  return [...text].length;
+  return [...text];
+}
+
+export function countGraphemes(text: string): number {
+  return segmentGraphemes(text).length;
 }
 
 export interface AutoTimingBreakdown {
@@ -142,7 +152,7 @@ export function computeAutoAdvanceDelay(
   });
   pauseMs += counted.ellipsis * pauses.ellipsis;
 
-  for (const ch of withoutEllipses) {
+  for (const ch of segmentGraphemes(withoutEllipses)) {
     if (CJK.test(ch)) glyphs += 1;
     else if (/[，、,:：;；]/.test(ch)) pauseMs += pauses.comma;
     else if (/[。.｡]/.test(ch)) pauseMs += pauses.sentence;
@@ -161,9 +171,10 @@ export function computeAutoAdvanceDelay(
 
   let delayMs = Math.max(estimate, voiceFloorMs);
   delayMs = Math.min(delayMs, maxDelay);
-  // The ceiling may not truncate audio, and nothing advances faster than the
-  // floor - a one-word line still gets a beat.
-  delayMs = Math.max(delayMs, minDelay, voiceMs);
+  // The ceiling bounds *reading* time, never a voice line: a voiced line
+  // still gets its clip plus the pause that follows it, and nothing advances
+  // faster than the floor - a one-word line still gets a beat.
+  delayMs = Math.max(delayMs, minDelay, voiceFloorMs);
 
   return {
     delayMs: Math.round(delayMs),

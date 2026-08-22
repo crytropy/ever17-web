@@ -226,16 +226,26 @@ export function buildNarrativeCatalog(scenes: readonly IrScene[], gameId: string
   const entries = collectMenuEntries(scenes);
   const labels: Record<string, SceneProgressLabel> = {};
   const routes = new Map<string, RouteProgressDefinition>();
+  const viewpoints = new Map<string, { id: string; name: string; order: number }>();
 
   for (const { scene, label } of entries) {
     const parsed = parseMenuLabel(label);
     if (!parsed) continue;
     const shortLabel = composeShortLabel(parsed);
+    if (parsed.viewpointId && parsed.viewpointName && !viewpoints.has(parsed.viewpointId)) {
+      viewpoints.set(parsed.viewpointId, {
+        id: parsed.viewpointId,
+        name: parsed.viewpointName,
+        order: viewpoints.size,
+      });
+    }
     labels[scene] = {
       shortLabel,
       kind: parsed.kind,
+      ...(parsed.viewpointId ? { viewpointId: parsed.viewpointId } : {}),
       ...(parsed.viewpointName ? { viewpoint: parsed.viewpointName } : {}),
-      ...(parsed.routeId ? { routeId: parsed.routeId } : {}),
+      // the stable id, so the shared chapters of two viewpoints stay distinct
+      ...(parsed.routeId ? { routeId: routeKey(parsed) } : {}),
       ...(parsed.day !== undefined ? { day: parsed.day } : {}),
       ...(parsed.segment ? { internalSegment: parsed.segment } : {}),
     };
@@ -244,6 +254,7 @@ export function buildNarrativeCatalog(scenes: readonly IrScene[], gameId: string
       routes.set(routeKey(parsed), {
         id: routeKey(parsed),
         name: def.name,
+        ...(parsed.viewpointId ? { viewpointId: parsed.viewpointId } : {}),
         ...(parsed.viewpointName ? { viewpoint: parsed.viewpointName } : {}),
         ...(def.common ? { common: true } : {}),
         order: routes.size,
@@ -268,6 +279,7 @@ export function buildNarrativeCatalog(scenes: readonly IrScene[], gameId: string
     version: NARRATIVE_CATALOG_VERSION,
     gameId,
     fallbackLabel: FALLBACK_LABEL,
+    viewpoints: [...viewpoints.values()].sort((a, b) => a.order - b.order),
     scenes: labels,
     routes: [...routes.values()],
     endings: collectEndingRoster(scenes),

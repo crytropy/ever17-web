@@ -36,6 +36,7 @@ import {
 import { applyPlayerDataImport, buildPlayerDataExport, mergeCompletion } from "./transfer.js";
 import { LoadingIndicator } from "./loading-indicator.js";
 import { computeAutoAdvanceDelay } from "./auto-timing.js";
+import { AutoAdvanceTimer } from "./auto-timer.js";
 import { matchEndings, type RouteGraphJson } from "kid-graph/model";
 
 declare global {
@@ -264,7 +265,9 @@ class WebPlayer {
   private channel: BroadcastChannel | null = null;
   private auto = false;
   private skip = false;
-  private autoTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly autoTimer = new AutoAdvanceTimer(() => {
+    if (this.auto && !this.overlayOpen()) this.advance();
+  });
 
   constructor(
     private readonly assetsBase: string,
@@ -905,9 +908,7 @@ class WebPlayer {
     const { delayMs } = computeAutoAdvanceDelay(ev.text, seconds !== null ? seconds * 1000 : null, {
       speed: this.config.autoSpeed,
     });
-    this.autoTimer = setTimeout(() => {
-      if (this.auto && !this.overlayOpen()) this.advance();
-    }, delayMs);
+    this.autoTimer.schedule(delayMs);
   }
 
   /** Any surface that should hold Auto rather than let it advance underneath. */
@@ -916,8 +917,7 @@ class WebPlayer {
   }
 
   private cancelAuto(): void {
-    if (this.autoTimer !== null) clearTimeout(this.autoTimer);
-    this.autoTimer = null;
+    this.autoTimer.cancel();
   }
 
   // ------------------------------------------------ backlog
@@ -944,6 +944,9 @@ class WebPlayer {
 
   // ------------------------------------------------ core loop
   private advance(): void {
+    // Cancel first: a timer that fires between releasing this line and
+    // scheduling the next one would advance the next line too.
+    this.autoTimer.cancel();
     this.stage?.skip();
     const w = this.clickWaiter;
     this.clickWaiter = null;
