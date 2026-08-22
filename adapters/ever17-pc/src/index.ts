@@ -21,6 +21,13 @@ export {
 export type { PrepareOptions, PreparedPackage } from "./import.js";
 export { createAssetMaterializer, AssetConversionError } from "./materialize.js";
 export type { Materializer, MaterializeDeps, AssetSource } from "./materialize.js";
+export {
+  buildNarrativeCatalog,
+  collectMenuEntries,
+  collectEndingRoster,
+  parseMenuLabel,
+  composeShortLabel,
+} from "./narrative.js";
 export { validateCachedPackage, validateSceneIr } from "./cache.js";
 export type { CacheValidation, CacheExpectation } from "./cache.js";
 export {

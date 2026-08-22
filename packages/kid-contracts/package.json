@@ -15,7 +15,8 @@
     "./scene-assets": "./src/scene-assets.ts",
     "./compat": "./src/compat.ts",
     "./import-report": "./src/import-report.ts",
-    "./persistence": "./src/persistence.ts"
+    "./persistence": "./src/persistence.ts",
+    "./narrative": "./src/narrative.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

@@ -13,7 +13,12 @@
  */
 import { GameSession, type AsyncSceneSource, type SessionEvent } from "kid-runtime";
 import type { AssetIndex, AssetManifest, ManifestEntry } from "kid-runtime";
-import { DEFAULT_GAME_PROFILE, type GamePackageMeta } from "kid-contracts";
+import {
+  DEFAULT_GAME_PROFILE,
+  labelForScene,
+  type GamePackageMeta,
+  type NarrativeProgressCatalog,
+} from "kid-contracts";
 import { PixiStage } from "kid-renderer-pixi";
 import { loadConfig, saveConfig, type VnConfig } from "./config.js";
 import { ALL_SLOTS, AUTO_SLOT, QUICK_SLOT, SaveSlots, type SlotMeta } from "./slots.js";
@@ -200,6 +205,8 @@ class WebPlayer {
   private config: VnConfig;
   /** Cross-run scenario state: what a finished route opens up next time. */
   private readonly progress: PersistentProgress;
+  /** Chapter names from the game's own data; null when it ships none. */
+  private catalog: NarrativeProgressCatalog | null = null;
   /** Completion tracking (scenes/choices/endings/assets), separate from saves. */
   private tracker: CompletionTracker | null = null;
   /** Movies played since the last choice - identifies the ending reached. */
@@ -346,7 +353,7 @@ class WebPlayer {
     const latest = this.latestSave();
     if (latest) {
       titleMenu.cont.classList.remove("hidden");
-      titleMenu.cont.textContent = `CONTINUE · ${latest.scene} · line ${latest.lines}`;
+      titleMenu.cont.textContent = `CONTINUE · ${this.chapterLabel(latest.scene)}`;
     } else {
       titleMenu.cont.classList.add("hidden");
     }
@@ -522,7 +529,10 @@ class WebPlayer {
       const thumb = await this.thumbnail();
       this.recordProgress();
       const meta = this.slots.put(slot, this.session.save(), thumb);
-      toast(`saved ${slot === QUICK_SLOT ? "quicksave" : slot === AUTO_SLOT ? "autosave" : "slot " + slot}: ${meta.label}`);
+      toast(
+        `saved ${slot === QUICK_SLOT ? "quicksave" : slot === AUTO_SLOT ? "autosave" : "slot " + slot}: ` +
+          this.chapterLabel(meta.scene),
+      );
     } catch (err) {
       toast(`save failed: ${(err as Error).message}`);
     }
@@ -555,7 +565,7 @@ class WebPlayer {
       });
       this.moviesSinceChoice = [];
       this.moviesPlayed = new Set();
-      toast(`loaded: ${save.vm.scene} · line ${save.counters.lines}`);
+      toast(`loaded: ${this.chapterLabel(save.vm.scene)}`);
       wakeClick?.();
       wakeChoice?.(-1);
       void this.loop();
@@ -600,7 +610,9 @@ class WebPlayer {
           (meta.thumb ? `<img alt="">` : `<div class="empty-thumb">·</div>`) +
           `<div><b>${name}</b></div><div class="slot-label"></div><div class="when">${when}</div>`;
         if (meta.thumb) (div.querySelector("img") as HTMLImageElement).src = meta.thumb;
-        (div.querySelector(".slot-label") as HTMLElement).textContent = meta.label;
+        // resolved at display time, so saves written before chapter names
+        // existed still show one
+        (div.querySelector(".slot-label") as HTMLElement).textContent = this.chapterLabel(meta.scene);
       } else {
         div.innerHTML = `<div class="empty-thumb">empty</div><div><b>${name}</b></div><div class="when">—</div>`;
       }
@@ -658,7 +670,8 @@ class WebPlayer {
         const div = document.createElement("div");
         div.className = "entry";
         const who = e.speaker ? `<div class="who">${e.speaker}</div>` : "";
-        div.innerHTML = `<span class="scn">${e.scene}</span>${who}<div class="line"></div>`;
+        div.innerHTML = `<span class="scn"></span>${who}<div class="line"></div>`;
+        (div.querySelector(".scn") as HTMLElement).textContent = this.chapterLabel(e.scene);
         (div.querySelector(".line") as HTMLElement).textContent = e.text;
         backlogEl.appendChild(div);
       }
@@ -685,9 +698,14 @@ class WebPlayer {
     });
   }
 
+  /** The player-facing name of a chapter - never a script id. */
+  private chapterLabel(scene: string | null | undefined): string {
+    return labelForScene(this.catalog, scene).shortLabel;
+  }
+
   private hud(): void {
     const s = this.session;
-    hudEl.textContent = s ? `${s.scene} · scene ${s.route.length} · line ${s.lines}` : "";
+    hudEl.textContent = s ? this.chapterLabel(s.scene) : "";
   }
 
   private async playMovie(name: string): Promise<void> {
@@ -805,7 +823,6 @@ class WebPlayer {
         speakerEl.textContent = "";
         textEl.textContent =
           (ev.reason === "ending" ? "— FIN —" : `— ${ev.reason} —`) + "\n\nTITLE (T) returns to the title screen.";
-        hudEl.textContent += " · ended";
         // The run is over: fold anything it unlocked into global progress
         // before anything else can replace the session.
         this.recordProgress();
@@ -867,6 +884,9 @@ class WebPlayer {
     this.stage.onAssetActivity = (pending) => this.loading.update(pending);
     this.stage.onAssetError = (file) => this.noteAssetError(file);
     this.tracker = await CompletionTracker.open(new IdbCompletionStore(this.ns)).catch(() => null);
+    this.catalog = await fetch("narrative.json")
+      .then((r) => (r.ok ? (r.json() as Promise<NarrativeProgressCatalog>) : null))
+      .catch(() => null);
     // The title screen drives everything from here: New Game, Continue,
     // Load, Settings and the route map.
     this.showTitle();

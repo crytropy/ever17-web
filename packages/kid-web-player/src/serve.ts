@@ -140,6 +140,18 @@ export function serve(opts: ServeOptions): void {
       res.end(gameJson);
       return;
     }
+    if (url === "/narrative.json") {
+      // chapter names generated during import; absent for a game whose
+      // adapter does not provide any
+      const path = join(resolve(opts.irDir), "..", "narrative.json");
+      if (!existsSync(path)) {
+        res.writeHead(404, { "content-type": "text/plain" }).end("no narrative catalog");
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(readFileSync(path));
+      return;
+    }
 
     // ------------- route explorer endpoints
     if (url === "/graph.json") {

@@ -59,6 +59,7 @@ import {
 } from "kid-contracts";
 import { buildCfg, disassemble, encodingForScript, lowerScene, parseLnk, parseSc3 } from "e17-parser";
 import { detectCrossRunVars } from "kid-graph";
+import { buildNarrativeCatalog } from "./narrative.js";
 import { AssetLibrary, RAW_PCM_CHANNELS, RAW_PCM_SAMPLE_RATE, parseCpsMeta, parseWaf } from "e17-assets";
 import { discoverInstallation, type Ever17Installation } from "./discover.js";
 import { FINGERPRINT_ALGO, fingerprintInstallation } from "./fingerprint.js";
@@ -493,7 +494,17 @@ function buildPackage(ctx: BuildContext): GamePackageMeta {
       : `cross-run progress: none detected`,
   );
 
-  // ---- 5. report + metadata --------------------------------------------
+  // ---- 5. narrative labels ---------------------------------------------
+  // The release names its own chapters in its developer menus; those names
+  // are what the player sees instead of script ids.
+  const catalog = buildNarrativeCatalog(scenes, EVER17_GAME_ID);
+  writeFileSync(join(buildDir, "narrative.json"), JSON.stringify(catalog, null, 1));
+  log(
+    `chapter names: ${Object.keys(catalog.scenes).length} scenes labelled from the game's own menus` +
+      (catalog.endings.length ? `, ${catalog.endings.length} endings in its roster` : ""),
+  );
+
+  // ---- 6. report + metadata --------------------------------------------
   const report: ImportReport = {
     format: IMPORT_REPORT_FORMAT,
     version: IMPORT_REPORT_VERSION,

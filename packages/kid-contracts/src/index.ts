@@ -44,5 +44,18 @@ export type {
   PersistentStatePolicy,
   PersistentMergeRule,
 } from "./persistence.js";
+export {
+  NARRATIVE_CATALOG_FORMAT,
+  NARRATIVE_CATALOG_VERSION,
+  labelForScene,
+  endingById,
+} from "./narrative.js";
+export type {
+  NarrativeProgressCatalog,
+  SceneProgressLabel,
+  SceneProgressKind,
+  RouteProgressDefinition,
+  EndingProgressDefinition,
+} from "./narrative.js";
 export { collectSceneAssets, collectSceneMovies, bgmAssetName } from "./scene-assets.js";
 export type { AssetRef } from "./scene-assets.js";
