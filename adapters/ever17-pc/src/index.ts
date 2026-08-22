@@ -17,11 +17,21 @@ export {
   digestIndexPath,
   prepareGamePackage,
   validateInstallation,
-  promoteDirectory,
-  cleanupAbandonedBuilds,
 } from "./import.js";
 export type { PrepareOptions, PreparedPackage } from "./import.js";
 export { createAssetMaterializer, AssetConversionError } from "./materialize.js";
 export type { Materializer, MaterializeDeps, AssetSource } from "./materialize.js";
-export { validateCachedPackage } from "./cache.js";
+export { validateCachedPackage, validateSceneIr } from "./cache.js";
 export type { CacheValidation, CacheExpectation } from "./cache.js";
+export {
+  promoteDirectory,
+  cleanupAbandonedBuilds,
+  recoverInterruptedPromotion,
+  retiredCandidates,
+  withCacheLock,
+  buildDirName,
+  BUILD_SUFFIX,
+  RETIRE_SUFFIX,
+  ABANDONED_BUILD_MS,
+} from "./promotion.js";
+export type { RecoveryOutcome } from "./promotion.js";

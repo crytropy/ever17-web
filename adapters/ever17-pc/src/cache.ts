@@ -11,7 +11,9 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
   IMPORT_REPORT_FORMAT,
+  IMPORT_REPORT_VERSION,
   isCompatibleEngineVersion,
+  isSupportedIrSchema,
   isSupportedManifestSchema,
   isSupportedPackageFormat,
   isSupportedPackageSchema,
@@ -19,6 +21,7 @@ import {
   type AssetManifest,
   type GamePackageMeta,
   type ImportReport,
+  type IrScene,
   type PlayerBranding,
 } from "kid-contracts";
 
@@ -45,11 +48,33 @@ export interface CacheExpectation {
   packageDir: string;
   /** Fingerprint the source installation currently hashes to. */
   fingerprint: string;
+  /** Algorithm that produced the fingerprint; a different one is not
+   * comparable, so the package must be rebuilt. */
+  fingerprintAlgo: string;
   gameId: string;
-  /** Scene a New Game starts at; its IR must be present. */
+  /** Scene a New Game starts at; its IR must be present and executable. */
   startScene: string;
   /** Branding the product currently wants (drift is migratable, not fatal). */
   branding?: PlayerBranding;
+}
+
+/** Structural check of one decompiled scene: enough to know the runtime can
+ * execute it, without walking every op. */
+export function validateSceneIr(scene: unknown, name: string): string | null {
+  if (typeof scene !== "object" || scene === null) return `${name}: not an object`;
+  const s = scene as Partial<IrScene>;
+  if (!isSupportedIrSchema(s.formatVersion)) {
+    return `${name}: unsupported IR schema ${String(s.formatVersion)}`;
+  }
+  if (typeof s.scene !== "string" || s.scene.length === 0) return `${name}: no scene name`;
+  if (typeof s.entry !== "string" || s.entry.length === 0) return `${name}: no entry block`;
+  if (typeof s.blocks !== "object" || s.blocks === null) return `${name}: no blocks`;
+  const blocks = s.blocks as Record<string, unknown>;
+  if (Object.keys(blocks).length === 0) return `${name}: no blocks`;
+  const entry = blocks[s.entry];
+  if (entry === undefined) return `${name}: entry block "${s.entry}" is missing`;
+  if (!Array.isArray((entry as { ops?: unknown }).ops)) return `${name}: entry block has no ops`;
+  return null;
 }
 
 const rebuild = (reasons: string[], extra: Partial<CacheValidation> = {}): CacheValidation => ({
@@ -123,11 +148,52 @@ export function validateCachedPackage(expect: CacheExpectation): CacheValidation
   if (report.format !== IMPORT_REPORT_FORMAT) {
     return rebuild([`import-report.json has format "${String(report.format)}"`], { meta });
   }
+  if (report.version !== IMPORT_REPORT_VERSION) {
+    return rebuild([`unsupported import-report version ${String(report.version)}`], { meta });
+  }
   if (report.status !== "complete") {
     return rebuild([`the recorded import did not complete (status "${String(report.status)}")`], { meta, report });
   }
+  if (report.gameId !== expect.gameId) {
+    return rebuild([`import-report.json is for gameId "${String(report.gameId)}"`], { meta, report });
+  }
   if (report.sourceFingerprint !== expect.fingerprint) {
     return rebuild(["import-report.json describes a different source"], { meta, report });
+  }
+  const versions = report.schemaVersions;
+  if (typeof versions !== "object" || versions === null) {
+    return rebuild(["import-report.json records no schema versions"], { meta, report });
+  }
+  if (versions.fingerprintAlgo !== expect.fingerprintAlgo) {
+    return rebuild(
+      [`built with fingerprint algorithm "${String(versions.fingerprintAlgo)}", now "${expect.fingerprintAlgo}"`],
+      { meta, report },
+    );
+  }
+  if (!isSupportedPackageSchema(versions.package)) {
+    return rebuild([`import recorded unsupported package schema ${String(versions.package)}`], { meta, report });
+  }
+  if (!isSupportedManifestSchema(versions.manifest)) {
+    return rebuild([`import recorded unsupported manifest schema ${String(versions.manifest)}`], { meta, report });
+  }
+  if (!isSupportedIrSchema(versions.ir)) {
+    return rebuild([`import recorded unsupported IR schema ${String(versions.ir)}`], { meta, report });
+  }
+  if (!isSupportedProfileVersion(versions.profile)) {
+    return rebuild([`import recorded unsupported profile version ${String(versions.profile)}`], { meta, report });
+  }
+  if (!isCompatibleEngineVersion(versions.engine)) {
+    return rebuild([`import was produced by an incompatible engine (${String(versions.engine)})`], { meta, report });
+  }
+  if (!Array.isArray(report.scripts?.scenes) || report.scripts.scenes.length !== report.scripts.decompiled) {
+    return rebuild(
+      [`import-report.json lists ${report.scripts?.scenes?.length ?? 0} scenes but recorded ` +
+        `${String(report.scripts?.decompiled)} decompiled`],
+      { meta, report },
+    );
+  }
+  if (report.scripts.failed !== 0) {
+    return rebuild([`the import recorded ${report.scripts.failed} failed script(s)`], { meta, report });
   }
 
   // ---- manifest ----------------------------------------------------------
@@ -164,6 +230,15 @@ export function validateCachedPackage(expect: CacheExpectation): CacheValidation
   if (!present.has(startScene)) {
     return rebuild([`the start scene "${expect.startScene}" has no IR`], { meta, report });
   }
+  // Parse the start scene for real: a package whose report looks complete but
+  // whose IR is malformed or from another schema must never be served, and
+  // this is the one scene every New Game needs.
+  const startRead = readJson<unknown>(join(irDir, `${startScene}.json`));
+  if (!startRead.ok) {
+    return rebuild([`the start scene IR is corrupt: ${startRead.error}`], { meta, report });
+  }
+  const startProblem = validateSceneIr(startRead.value, `${startScene}.json`);
+  if (startProblem) return rebuild([`the start scene IR is unusable - ${startProblem}`], { meta, report });
   const expectedScenes = report.scripts.scenes.map((s) => s.toLowerCase());
   const absent = expectedScenes.filter((s) => !present.has(s));
   if (absent.length > 0) {

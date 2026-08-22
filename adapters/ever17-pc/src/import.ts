@@ -59,8 +59,15 @@ import {
 import { buildCfg, disassemble, encodingForScript, lowerScene, parseLnk, parseSc3 } from "e17-parser";
 import { AssetLibrary, RAW_PCM_CHANNELS, RAW_PCM_SAMPLE_RATE, parseCpsMeta, parseWaf } from "e17-assets";
 import { discoverInstallation, type Ever17Installation } from "./discover.js";
-import { fingerprintInstallation } from "./fingerprint.js";
-import { validateCachedPackage, type CacheValidation } from "./cache.js";
+import { FINGERPRINT_ALGO, fingerprintInstallation } from "./fingerprint.js";
+import { validateCachedPackage, validateSceneIr, type CacheValidation } from "./cache.js";
+import {
+  buildDirName,
+  cleanupAbandonedBuilds,
+  promoteDirectory,
+  recoverInterruptedPromotion,
+  withCacheLock,
+} from "./promotion.js";
 import { EVER17_GAME_ID, EVER17_PROFILE, EVER17_START_SCENE, EVER17_TITLE } from "./profile.js";
 
 export interface PrepareOptions {
@@ -118,44 +125,6 @@ function isNonStoryScene(scene: string): boolean {
   return patterns.some((p) => new RegExp(p, "i").test(scene));
 }
 
-/** Temporary build directories older than this are safe to remove. */
-const ABANDONED_BUILD_MS = 6 * 60 * 60 * 1000;
-const BUILD_SUFFIX = ".building-";
-const RETIRE_SUFFIX = ".replacing-";
-
-/** Remove leftover build directories from crashed runs - narrowly. Exported
- * so its narrowness can be tested directly. */
-export function cleanupAbandonedBuilds(outDir: string, keep: string, log: (m: string) => void): void {
-  if (!existsSync(outDir)) return;
-  const pattern = new RegExp(`^[0-9a-f]{16}\\${BUILD_SUFFIX}\\d+-[0-9a-f]+$`);
-  const retire = new RegExp(`^[0-9a-f]{16}\\${RETIRE_SUFFIX}[0-9a-f]+$`);
-  for (const name of readdirSync(outDir)) {
-    if (name === keep) continue;
-    if (!pattern.test(name) && !retire.test(name)) continue;
-    const path = join(outDir, name);
-    try {
-      if (Date.now() - statSync(path).mtimeMs < ABANDONED_BUILD_MS) continue;
-      rmSync(path, { recursive: true, force: true });
-      log(`removed abandoned build directory ${name}`);
-    } catch {
-      /* another process may be using it; leave it alone */
-    }
-  }
-}
-
-/** Move `from` onto `to` atomically, restoring the previous package on failure. */
-export function promoteDirectory(from: string, to: string, nonce: string): void {
-  const retired = `${to}${RETIRE_SUFFIX}${nonce}`;
-  const hadPrevious = existsSync(to);
-  if (hadPrevious) renameSync(to, retired);
-  try {
-    renameSync(from, to);
-  } catch (err) {
-    if (hadPrevious && existsSync(retired)) renameSync(retired, to);
-    throw err;
-  }
-  if (hadPrevious) rmSync(retired, { recursive: true, force: true });
-}
 
 export function prepareGamePackage(opts: PrepareOptions): PreparedPackage {
   const log = opts.log ?? (() => {});
@@ -180,16 +149,38 @@ export function prepareGamePackage(opts: PrepareOptions): PreparedPackage {
   const irDir = join(packageDir, "ir");
   const assetsDir = join(packageDir, "assets");
 
+  /** The check any candidate package must pass, wherever it sits. */
+  const expectationFor = (dir: string): Parameters<typeof validateCachedPackage>[0] => ({
+    packageDir: dir,
+    fingerprint,
+    fingerprintAlgo: FINGERPRINT_ALGO,
+    gameId: EVER17_GAME_ID,
+    startScene: EVER17_START_SCENE,
+    ...(opts.branding ? { branding: opts.branding } : {}),
+  });
+  /** Ignores branding drift: a retired copy is worth restoring regardless. */
+  const isUsable = (dir: string): boolean => {
+    const v = validateCachedPackage({ ...expectationFor(dir), branding: undefined as never });
+    return v.valid;
+  };
+
+  // A previous run may have died mid-promotion, leaving the only good copy in
+  // a retired directory. Put the cache back together before judging it.
+  withCacheLock(
+    opts.outDir,
+    () => {
+      const rec = recoverInterruptedPromotion(opts.outDir, fingerprint, isUsable, log);
+      if (rec.restored || rec.kept > 0) {
+        for (const r of rec.reasons) log(`  ${r}`);
+      }
+    },
+    log,
+  );
+
   // ---- 0. can the existing package be reused? ---------------------------
   let rejected: string[] = [];
   if (!opts.force) {
-    const check: CacheValidation = validateCachedPackage({
-      packageDir,
-      fingerprint,
-      gameId: EVER17_GAME_ID,
-      startScene: EVER17_START_SCENE,
-      ...(opts.branding ? { branding: opts.branding } : {}),
-    });
+    const check: CacheValidation = validateCachedPackage(expectationFor(packageDir));
     if (check.valid && check.meta) {
       log(`reusing cached package ${packageDir} (validated)`);
       return {
@@ -237,13 +228,15 @@ export function prepareGamePackage(opts: PrepareOptions): PreparedPackage {
 
   // ---- build into a temporary sibling, promote only on success ----------
   const nonce = randomBytes(4).toString("hex");
-  const buildDir = join(opts.outDir, `${fingerprint}${BUILD_SUFFIX}${process.pid}-${nonce}`);
+  const buildName = buildDirName(fingerprint, process.pid, nonce);
+  const buildDir = join(opts.outDir, buildName);
   mkdirSync(opts.outDir, { recursive: true });
-  cleanupAbandonedBuilds(opts.outDir, `${fingerprint}${BUILD_SUFFIX}${process.pid}-${nonce}`, log);
+  cleanupAbandonedBuilds(opts.outDir, buildName, log);
 
   try {
     const meta = buildPackage({ buildDir, fingerprint, fp, inst, opts, log, startedAt });
-    promoteDirectory(buildDir, packageDir, nonce);
+    // The swap itself is serialized so two imports cannot interleave renames.
+    withCacheLock(opts.outDir, () => promoteDirectory(buildDir, packageDir, nonce), log);
     log(`package ready: ${packageDir}`);
     const report = JSON.parse(readFileSync(join(packageDir, "import-report.json"), "utf8")) as ImportReport;
     return {
@@ -292,6 +285,11 @@ function buildPackage(ctx: BuildContext): GamePackageMeta {
       const d = disassemble(file, entry.data);
       const cfg = buildCfg(file, d);
       const ir = lowerScene(file, d, cfg, encodingForScript(file.name));
+      // Every scene is checked here, while we still have it in hand: cache
+      // reuse only re-parses the start scene, so this is the pass that proves
+      // the whole set is executable.
+      const problem = validateSceneIr(ir, entry.name);
+      if (problem) throw new Error(`decompiled to unusable IR - ${problem}`);
       writeFileSync(join(irDir, ir.scene.toLowerCase() + ".json"), JSON.stringify(ir, null, 1));
       scenes.push(ir);
     } catch (err) {
@@ -536,6 +534,7 @@ function buildPackage(ctx: BuildContext): GamePackageMeta {
   const verdict = validateCachedPackage({
     packageDir: buildDir,
     fingerprint,
+    fingerprintAlgo: FINGERPRINT_ALGO,
     gameId: EVER17_GAME_ID,
     startScene: EVER17_START_SCENE,
     ...(opts.branding ? { branding: opts.branding } : {}),

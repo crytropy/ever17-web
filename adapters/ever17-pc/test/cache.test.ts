@@ -16,7 +16,8 @@ import {
   type ImportReport,
 } from "kid-contracts";
 import { validateCachedPackage } from "../src/cache.js";
-import { cleanupAbandonedBuilds, promoteDirectory } from "../src/import.js";
+import { cleanupAbandonedBuilds, promoteDirectory } from "../src/promotion.js";
+import { FINGERPRINT_ALGO } from "../src/fingerprint.js";
 import { EVER17_GAME_ID, EVER17_PROFILE, EVER17_START_SCENE } from "../src/profile.js";
 
 /**
@@ -56,7 +57,17 @@ function fixture(o: Overrides = {}): string {
   if (!omit.has("ir")) {
     mkdirSync(join(dir, "ir"), { recursive: true });
     for (const s of scenes) {
-      writeFileSync(join(dir, "ir", `${s}.json`), JSON.stringify({ formatVersion: IR_SCHEMA_VERSION, scene: s }));
+      writeFileSync(
+        join(dir, "ir", `${s}.json`),
+        JSON.stringify({
+          formatVersion: IR_SCHEMA_VERSION,
+          scene: s,
+          entry: "00000010",
+          blocks: { "00000010": { next: null, ops: [{ op: "dialogue", text: "x", speaker: null, voice: null }] } },
+          warnings: [],
+          meta: { sceneIds: [], textChunks: 1, resources: [], unknownOpcodeCount: 0, coverage: 1 },
+        }),
+      );
     }
   }
   if (!omit.has("manifest.json")) {
@@ -87,7 +98,7 @@ function fixture(o: Overrides = {}): string {
         ir: IR_SCHEMA_VERSION,
         profile: PROFILE_VERSION,
         engine: KID_ENGINE_VERSION,
-        fingerprintAlgo: "e17-fp-2",
+        fingerprintAlgo: FINGERPRINT_ALGO,
       },
       scripts: { discovered: scenes.length, decompiled: scenes.length, failed: 0, scenes, failures: [] },
       assets: { referenced: 1, indexed: 1, missing: 0, missingStory: 0, missingSystem: 0 },
@@ -116,10 +127,20 @@ function fixture(o: Overrides = {}): string {
   return dir;
 }
 
+const baseVersions = {
+  package: GAME_PACKAGE_SCHEMA_VERSION,
+  manifest: MANIFEST_SCHEMA_VERSION,
+  ir: IR_SCHEMA_VERSION,
+  profile: PROFILE_VERSION,
+  engine: KID_ENGINE_VERSION,
+  fingerprintAlgo: FINGERPRINT_ALGO,
+};
+
 const check = (packageDir: string, extra: Partial<Parameters<typeof validateCachedPackage>[0]> = {}) =>
   validateCachedPackage({
     packageDir,
     fingerprint: FINGERPRINT,
+    fingerprintAlgo: FINGERPRINT_ALGO,
     gameId: EVER17_GAME_ID,
     startScene: EVER17_START_SCENE,
     ...extra,
@@ -196,6 +217,76 @@ describe("cache validation", () => {
   it("rejects a package with no import report, or an incomplete one", () => {
     expect(check(fixture({ omit: ["import-report.json"] })).reasons.join()).toMatch(/import-report\.json is missing/);
     expect(check(fixture({ report: { status: "failed" } })).reasons.join()).toMatch(/did not complete/);
+  });
+
+  it("rejects an import report whose own version or gameId is wrong", () => {
+    expect(check(fixture({ report: { version: 99 as never } })).reasons.join()).toMatch(/unsupported import-report version/);
+    expect(check(fixture({ report: { gameId: "never7" } })).reasons.join()).toMatch(/import-report\.json is for gameId/);
+  });
+
+  it("rejects a package fingerprinted by a different algorithm", () => {
+    // the digests are not comparable, so "same fingerprint" means nothing
+    const v = check(fixture({
+      report: { schemaVersions: { ...baseVersions, fingerprintAlgo: "e17-fp-1" } },
+    }));
+    expect(v.mustRebuild).toBe(true);
+    expect(v.reasons.join()).toMatch(/fingerprint algorithm/);
+  });
+
+  it("rejects an import recorded against unsupported schema versions", () => {
+    const cases: [string, Record<string, unknown>][] = [
+      ["package schema", { package: 99 }],
+      ["manifest schema", { manifest: 99 }],
+      ["IR schema", { ir: 99 }],
+      ["profile version", { profile: 99 }],
+      ["incompatible engine", { engine: "0.1.0" }],
+    ];
+    for (const [what, patch] of cases) {
+      const v = check(fixture({ report: { schemaVersions: { ...baseVersions, ...patch } as never } }));
+      expect(v.mustRebuild, what).toBe(true);
+      expect(v.reasons.join(), what).toMatch(/unsupported|incompatible/);
+    }
+  });
+
+  it("rejects a report whose scene list disagrees with its own counts", () => {
+    const v = check(fixture({
+      report: { scripts: { discovered: 3, decompiled: 3, failed: 0, scenes: ["op00"], failures: [] } },
+    }));
+    expect(v.reasons.join()).toMatch(/lists 1 scenes but recorded 3/);
+  });
+
+  it("rejects a report that recorded failed scripts", () => {
+    const v = check(fixture({
+      report: {
+        scripts: { discovered: 3, decompiled: 3, failed: 2, scenes: SCENES, failures: [] },
+      },
+    }));
+    expect(v.reasons.join()).toMatch(/2 failed script/);
+  });
+
+  it("rejects a package whose start-scene IR is corrupt or foreign", () => {
+    // a nominally complete report cannot vouch for the bytes on disk
+    const corrupt = fixture();
+    writeFileSync(join(corrupt, "ir", "op00.json"), "{ truncated");
+    expect(check(corrupt).reasons.join()).toMatch(/start scene IR is corrupt/);
+
+    const foreign = fixture();
+    writeFileSync(
+      join(foreign, "ir", "op00.json"),
+      JSON.stringify({ formatVersion: 99, scene: "op00", entry: "a", blocks: { a: { ops: [] } } }),
+    );
+    expect(check(foreign).reasons.join()).toMatch(/unsupported IR schema/);
+
+    const headless = fixture();
+    writeFileSync(
+      join(headless, "ir", "op00.json"),
+      JSON.stringify({ formatVersion: IR_SCHEMA_VERSION, scene: "op00", entry: "missing", blocks: { a: { ops: [] } } }),
+    );
+    expect(check(headless).reasons.join()).toMatch(/entry block "missing" is missing/);
+
+    const empty = fixture();
+    writeFileSync(join(empty, "ir", "op00.json"), JSON.stringify({ formatVersion: IR_SCHEMA_VERSION, scene: "op00", entry: "a", blocks: {} }));
+    expect(check(empty).reasons.join()).toMatch(/no blocks/);
   });
 
   it("rejects a missing, corrupt or unsupported manifest", () => {
@@ -293,7 +384,7 @@ describe("atomic package promotion", () => {
 });
 
 describe("abandoned build cleanup", () => {
-  it("removes only stale build directories, never packages or fresh builds", () => {
+  it("removes only stale build directories, never packages, fresh builds or retired copies", () => {
     const root = tempDir();
     const stale = join(root, "abcdef0123456789.building-999-deadbeef");
     const fresh = join(root, "abcdef0123456789.building-1000-cafebabe");
@@ -309,11 +400,13 @@ describe("abandoned build cleanup", () => {
     cleanupAbandonedBuilds(root, "abcdef0123456789.building-1000-cafebabe", (m) => removed.push(m));
 
     expect(existsSync(stale)).toBe(false);
-    expect(existsSync(retired)).toBe(false);
     expect(existsSync(fresh)).toBe(true);
     expect(existsSync(realPackage)).toBe(true);
     expect(existsSync(unrelated)).toBe(true);
-    expect(removed).toHaveLength(2);
+    // a retired copy may be the only recoverable package: age alone never
+    // justifies deleting it (recoverInterruptedPromotion owns that decision)
+    expect(existsSync(retired)).toBe(true);
+    expect(removed).toHaveLength(1);
   });
 
   it("does nothing when the cache root does not exist", () => {
