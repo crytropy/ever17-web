@@ -40,17 +40,21 @@ export class MemoryCompletionStore implements CompletionStore {
   }
 }
 
-const DB_NAME = "e17vn-completion";
 const DB_STORE = "completion";
 const DB_KEY = "v1";
 
-/** IndexedDB-backed store (browser). */
+/** IndexedDB-backed store (browser); one database per game namespace. */
 export class IdbCompletionStore implements CompletionStore {
   private db: Promise<IDBDatabase> | null = null;
+  private readonly dbName: string;
+
+  constructor(/** Game storage namespace (GameProfile.storageNamespace). */ ns: string) {
+    this.dbName = `${ns}-completion`;
+  }
 
   private open(): Promise<IDBDatabase> {
     this.db ??= new Promise((resolve, reject) => {
-      const req = indexedDB.open(DB_NAME, 1);
+      const req = indexedDB.open(this.dbName, 1);
       req.onupgradeneeded = () => {
         if (!req.result.objectStoreNames.contains(DB_STORE)) req.result.createObjectStore(DB_STORE);
       };

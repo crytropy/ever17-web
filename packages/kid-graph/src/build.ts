@@ -1,5 +1,6 @@
 import type { IrOp, IrScene } from "kid-contracts/ir";
 import { collectSceneAssets } from "kid-contracts/scene-assets";
+import type { GameProfile } from "kid-contracts/profile";
 import { RELATIONS } from "kid-runtime";
 import type {
   ChoiceSite,
@@ -73,7 +74,7 @@ function sameCond(a: ConditionExpr, b: ConditionExpr): boolean {
   return a.varId === b.varId && a.rel === b.rel && a.value === b.value;
 }
 
-export function analyzeScene(scene: IrScene): SceneAnalysis {
+export function analyzeScene(scene: IrScene, profile?: GameProfile): SceneAnalysis {
   const name = scene.scene.toLowerCase();
   const blockLabels = Object.keys(scene.blocks).sort();
 
@@ -370,7 +371,7 @@ export function analyzeScene(scene: IrScene): SceneAnalysis {
   }
 
   const reachableTermination = terminationSites.some((k) => segments.get(k)?.reachable);
-  const assets = [...new Set(collectSceneAssets(scene).map((a) => a.name.toLowerCase()))].sort();
+  const assets = [...new Set(collectSceneAssets(scene, profile).map((a) => a.name.toLowerCase()))].sort();
 
   const node: SceneNode = {
     id: name,
@@ -390,7 +391,12 @@ export function analyzeScene(scene: IrScene): SceneAnalysis {
 }
 
 /** Build the full static model over an IR scene set. */
-export function buildGraphModel(scenes: Map<string, IrScene>, start: string): RouteGraphModel {
+export function buildGraphModel(
+  scenes: Map<string, IrScene>,
+  start: string,
+  /** Game profile (BGM track naming feeds the per-scene asset lists). */
+  profile?: GameProfile,
+): RouteGraphModel {
   const nodes = new Map<string, SceneNode>();
   const transitions: Transition[] = [];
   const dispatchByScene = new Map<string, DispatchRow[]>();
@@ -400,7 +406,7 @@ export function buildGraphModel(scenes: Map<string, IrScene>, start: string): Ro
   const names = [...scenes.keys()].sort();
   for (const key of names) {
     const scene = scenes.get(key)!;
-    const a = analyzeScene(scene);
+    const a = analyzeScene(scene, profile);
     nodes.set(a.node.id, a.node);
     dispatchByScene.set(a.node.id, a.dispatch);
     for (const r of a.referencedScenes) if (!scenes.has(r)) missing.add(r);

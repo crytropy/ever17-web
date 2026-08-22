@@ -4,6 +4,7 @@
  * the same PixiStage the client uses, and POSTs PNGs back to the dev server.
  */
 import { PixiStage, type StageAction, type StageState } from "kid-renderer-pixi";
+import type { GamePackageMeta } from "kid-contracts";
 
 interface Fixture {
   name: string;
@@ -14,7 +15,10 @@ interface Fixture {
 async function run(): Promise<void> {
   const out = document.getElementById("out")!;
   const parent = document.getElementById("pixi-parent")!;
-  const stage = await PixiStage.create(parent);
+  const meta = await fetch("game.json")
+    .then((r) => (r.ok ? (r.json() as Promise<GamePackageMeta>) : null))
+    .catch(() => null);
+  const stage = await PixiStage.create(parent, meta?.profile);
   const fixtures = (await (await fetch("shots/fixtures.json")).json()) as Fixture[];
   const results: string[] = [];
   for (const f of fixtures) {

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { inflateSync, deflateSync, crc32 } from "node:zlib";
 import type { AssetResolver } from "./assets.js";
 import type { SceneStateSnapshot } from "./types.js";
-import { SCREEN_H, SCREEN_W } from "./vm.js";
+import { DEFAULT_GAME_PROFILE, type GameProfile } from "kid-contracts/profile";
 
 /**
  * Headless frame compositor: background + sprites (+ a plain text band) into a
@@ -151,7 +151,9 @@ export function renderFrame(
   state: SceneStateSnapshot,
   assets: AssetResolver,
   _labels: FrameLabels,
+  profile: GameProfile = DEFAULT_GAME_PROFILE,
 ): Buffer {
+  const { width: SCREEN_W, height: SCREEN_H } = profile.canvas;
   const frame: Raster = {
     width: SCREEN_W,
     height: SCREEN_H,

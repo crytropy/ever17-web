@@ -1,7 +1,9 @@
 /**
  * Client configuration: typed, versioned, persisted through an injected
  * localStorage-compatible store (mockable in tests). Presentation-side only -
- * the runtime contracts know nothing about it.
+ * the runtime contracts know nothing about it. Keys are namespaced per game
+ * (GameProfile.storageNamespace) so multiple games on one origin never
+ * collide.
  */
 
 export interface StorageLike {
@@ -22,7 +24,7 @@ export interface VnConfig {
   transitionSpeed: number;
 }
 
-export const CONFIG_KEY = "e17vn:config";
+export const configKey = (ns: string): string => `${ns}:config`;
 
 export const DEFAULT_CONFIG: VnConfig = {
   version: 1,
@@ -39,9 +41,9 @@ const clamp = (v: unknown, lo: number, hi: number, dflt: number): number => {
 };
 
 /** Load config, sanitizing every field; unknown versions fall back to defaults. */
-export function loadConfig(storage: StorageLike): VnConfig {
+export function loadConfig(storage: StorageLike, ns: string): VnConfig {
   try {
-    const raw = storage.getItem(CONFIG_KEY);
+    const raw = storage.getItem(configKey(ns));
     if (!raw) return { ...DEFAULT_CONFIG };
     const parsed = JSON.parse(raw) as Partial<VnConfig>;
     if (parsed.version !== 1) return { ...DEFAULT_CONFIG };
@@ -58,6 +60,6 @@ export function loadConfig(storage: StorageLike): VnConfig {
   }
 }
 
-export function saveConfig(storage: StorageLike, config: VnConfig): void {
-  storage.setItem(CONFIG_KEY, JSON.stringify(config));
+export function saveConfig(storage: StorageLike, ns: string, config: VnConfig): void {
+  storage.setItem(configKey(ns), JSON.stringify(config));
 }

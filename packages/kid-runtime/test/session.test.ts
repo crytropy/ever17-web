@@ -7,8 +7,10 @@ import { IR_DIR } from "./helpers.js";
 const HAVE_IR = existsSync(`${IR_DIR}/op00.json`) && existsSync(`${IR_DIR}/y_ed.json`);
 
 describe.skipIf(!HAVE_IR)("full-route sessions (New Game -> Ending)", () => {
+  // Ever17's terminal-scene patterns (the runtime itself has no game default)
+  const EVER17_ENDINGS = ["(ep|bd|_ed)$"];
   const run = (opts: ConstructorParameters<typeof SessionRunner>[1]) =>
-    new SessionRunner(fsSceneSource(IR_DIR), opts).run("op00");
+    new SessionRunner(fsSceneSource(IR_DIR), { endingScenes: EVER17_ENDINGS, ...opts }).run("op00");
 
   it("policy=first completes the Takeshi/Tsugumi route to the ending", () => {
     const r = run({ policy: "first" });

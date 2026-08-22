@@ -5,6 +5,8 @@ import { runScene } from "kid-runtime";
 import { SessionRunner } from "kid-runtime";
 import { SceneVm } from "kid-runtime";
 import type { IrScene, PlayerEvent } from "kid-runtime";
+import { EVER17_PROFILE } from "ever17-pc";
+import { ever17PackageMeta } from "./branding.js";
 
 function usage(): never {
   console.log(`vn - minimal data-driven Ever17 runtime
@@ -47,7 +49,7 @@ const argv = process.argv.slice(2);
 // raw argv over before this CLI's parser can reject their flags.
 if (["graph", "endings", "explore", "explain-ending"].includes(argv[0] ?? "")) {
   const { runGraphCli } = await import("kid-graph/cli");
-  process.exit(await runGraphCli(argv));
+  process.exit(await runGraphCli(argv, { start: "op00", profile: EVER17_PROFILE }));
 }
 
 const positional: string[] = [];
@@ -113,13 +115,13 @@ if (cmd === "serve") {
   const assetsDir = manifestPath;
   if (!assetsDir) usage();
   const { serve } = await import("kid-web-player/serve");
-  serve({ irDir, assetsDir, port });
+  serve({ irDir, assetsDir, port, meta: ever17PackageMeta({ startScene: startScene }) });
 } else if (cmd === "fixtures") {
   const irDir = scenePath;
   const manifest = manifestPath;
   if (!manifest || !outPath) usage();
   const { captureFixtures } = await import("kid-runtime/node");
-  const fixtures = await captureFixtures(irDir, manifest, startScene);
+  const fixtures = await captureFixtures(irDir, manifest, startScene, undefined, EVER17_PROFILE);
   writeFileSync(outPath, JSON.stringify(fixtures, null, 1));
   console.log(`${fixtures.length} fixtures -> ${outPath}`);
   for (const f of fixtures) {
@@ -133,6 +135,8 @@ if (cmd === "serve") {
     choiceByScene,
     ...(Object.keys(choiceById).length ? { choiceById } : {}),
     policy,
+    endingScenes: EVER17_PROFILE.endingScenePatterns,
+    vm: { profile: EVER17_PROFILE },
   });
   const r = runner.run(startScene);
   console.log(`route: ${r.route.join(" -> ")}`);
@@ -178,7 +182,7 @@ switch (cmd) {
       ...(Object.keys(choiceById).length ? { choiceById } : {}),
       ...(maxLines ? { maxLines } : {}),
     };
-    const result = runScene(scene, assets, script);
+    const result = runScene(scene, assets, script, { profile: EVER17_PROFILE });
 
     if (!quiet) {
       for (const ev of result.events) {
@@ -222,7 +226,7 @@ switch (cmd) {
 
   case "frame": {
     if (!outPath) usage();
-    const vm = new SceneVm(scene, assets);
+    const vm = new SceneVm(scene, assets, { profile: EVER17_PROFILE });
     let seen = 0;
     let target: PlayerEvent | null = null;
     for (;;) {
@@ -245,7 +249,7 @@ switch (cmd) {
     const png = renderFrame(target.state, assets, {
       speaker: target.speaker,
       text: target.text,
-    });
+    }, EVER17_PROFILE);
     writeFileSync(outPath, png);
     console.log(
       `line ${frameLine} @ block ${target.state.block}: ${describeState(target)}\n` +

@@ -1,0 +1,18 @@
+{
+  "name": "ever17-pc",
+  "version": "0.1.0",
+  "description": "Ever17 adapter: bridges a user-owned Ever17 PC installation to the Web KID Engine (discovery, validation, conversion, game profile)",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "e17-assets": "*",
+    "e17-parser": "*",
+    "kid-contracts": "*"
+  }
+}

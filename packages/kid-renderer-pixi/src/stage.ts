@@ -5,14 +5,22 @@
  * on) plus the PresentationAction delta script recorded by the VM between
  * events. It has no knowledge of GameSession, scenes, or scenario semantics.
  *
- * Transition primitives: fade, crossfade, wait, sprite movement. Effects are
- * limited to the ids actually reached during full-route playback; each is an
- * approximation of the original engine's behaviour and is labelled as such.
+ * Transition primitives: fade, crossfade, wait, sprite movement. Canvas size
+ * and the meaning of numeric effect ids are game data, supplied through the
+ * GameProfile: unmapped effects are recorded but draw nothing, and every
+ * mapped visual is an approximation of the original engine's behaviour.
  */
 import { Application, Container, Graphics, Sprite, Texture, Assets } from "pixi.js";
+import {
+  DEFAULT_GAME_PROFILE,
+  type EffectClear,
+  type EffectProfile,
+  type GameProfile,
+} from "kid-contracts/profile";
 
-export const STAGE_W = 800;
-export const STAGE_H = 600;
+/** The slice of a GameProfile the renderer consumes. */
+export type StageProfile = Pick<GameProfile, "canvas" | "effects">;
+
 const FRAME_MS = 1000 / 60;
 
 /** Structural subset of the runtime types (kept local so the renderer depends
@@ -91,8 +99,23 @@ export class PixiStage {
   private shakeAmp = 0;
   private rand = lcg(0x1d117);
 
-  private constructor(app: Application) {
+  /** Canvas size from the game profile. */
+  private readonly w: number;
+  private readonly h: number;
+  private readonly effects: EffectProfile;
+  /** Effect ids whose visual is a pulsing tint (animated in tick()). */
+  private readonly pulseIds: Set<number>;
+
+  private constructor(app: Application, profile: StageProfile) {
     this.app = app;
+    this.w = profile.canvas.width;
+    this.h = profile.canvas.height;
+    this.effects = profile.effects ?? { on: {}, off: {} };
+    this.pulseIds = new Set(
+      Object.entries(this.effects.on)
+        .filter(([, v]) => v.type === "tint" && v.pulse)
+        .map(([id]) => Number(id)),
+    );
     this.world.addChild(this.bgA, this.bgB, this.spriteLayer);
     this.fx.addChild(this.tintRect, this.beamRect, this.fogRect, this.snow, this.flashRect);
     // cg overlays sit above the fill: op00 letterboxes its CGs over white
@@ -100,24 +123,24 @@ export class PixiStage {
     app.stage.addChild(this.shaker);
     this.spriteLayer.sortableChildren = true;
     this.cg.visible = false;
-    this.fillRect.rect(0, 0, STAGE_W, STAGE_H).fill(0x000000);
+    this.fillRect.rect(0, 0, this.w, this.h).fill(0x000000);
     this.fillRect.alpha = 0;
-    this.flashRect.rect(0, 0, STAGE_W, STAGE_H).fill(0xffffff);
+    this.flashRect.rect(0, 0, this.w, this.h).fill(0xffffff);
     this.flashRect.alpha = 0;
-    this.tintRect.rect(0, 0, STAGE_W, STAGE_H).fill(0x203050);
+    this.tintRect.rect(0, 0, this.w, this.h).fill(0x203050);
     this.tintRect.alpha = 0;
-    this.fogRect.rect(0, 0, STAGE_W, STAGE_H).fill(0xb8c0cc);
+    this.fogRect.rect(0, 0, this.w, this.h).fill(0xb8c0cc);
     this.fogRect.alpha = 0;
-    this.beamRect.rect(0, 0, STAGE_W, STAGE_H).fill(0xfff2c0);
+    this.beamRect.rect(0, 0, this.w, this.h).fill(0xfff2c0);
     this.beamRect.alpha = 0;
     app.ticker.add(() => this.tick(app.ticker.deltaMS));
   }
 
-  static async create(parent: HTMLElement): Promise<PixiStage> {
+  static async create(parent: HTMLElement, profile: StageProfile = DEFAULT_GAME_PROFILE): Promise<PixiStage> {
     const app = new Application();
     await app.init({
-      width: STAGE_W,
-      height: STAGE_H,
+      width: profile.canvas.width,
+      height: profile.canvas.height,
       background: 0x000000,
       antialias: true,
       preference: "webgl",
@@ -125,7 +148,7 @@ export class PixiStage {
       preserveDrawingBuffer: true,
     });
     parent.appendChild(app.canvas);
-    return new PixiStage(app);
+    return new PixiStage(app, profile);
   }
 
   // ---------------------------------------------------------------- ticking
@@ -145,17 +168,17 @@ export class PixiStage {
       this.shaker.y = 0;
       this.shakeAmp = 0;
     }
-    // blink pulsing (effect 45): tint oscillates while active
-    if (this.activeEffects.has(45)) {
+    // pulsing tint (e.g. a "blink" effect): oscillates while active
+    if ([...this.activeEffects].some((id) => this.pulseIds.has(id))) {
       this.tintRect.alpha = 0.25 + 0.2 * Math.sin(this.shakeTime / 140);
       this.shakeTime += dtMs * (this.shakeAmp > 0 ? 0 : 1);
     }
-    // snow drift (effect 41)
+    // particle drift (snow)
     if (this.snow.children.length > 0) {
       for (const flake of this.snow.children as Sprite[]) {
         flake.y += dtMs * 0.03 * (0.5 + flake.alpha);
         flake.x += Math.sin((flake.y + flake.x) / 60) * 0.3;
-        if (flake.y > STAGE_H) flake.y = -4;
+        if (flake.y > this.h) flake.y = -4;
       }
     }
   }
@@ -281,7 +304,7 @@ export class PixiStage {
           break;
         case "fillScreen": {
           const target = a.color === 1 ? 0xffffff : 0x000000;
-          this.fillRect.clear().rect(0, 0, STAGE_W, STAGE_H).fill(target);
+          this.fillRect.clear().rect(0, 0, this.w, this.h).fill(target);
           this.clearSprites(instant);
           this.cg.visible = false;
           const dur = a.fade ? this.takeDurationMs(18, speed) : 0;
@@ -329,18 +352,18 @@ export class PixiStage {
           if (instant) this.shakeAmp = 0;
           break;
         case "viewportRect": {
-          const w = a.w ?? STAGE_W;
-          const h = a.h ?? STAGE_H;
-          const full = w >= STAGE_W && h >= STAGE_H;
-          const scale = full ? 1 : Math.min(STAGE_W / w, STAGE_H / h);
+          const w = a.w ?? this.w;
+          const h = a.h ?? this.h;
+          const full = w >= this.w && h >= this.h;
+          const scale = full ? 1 : Math.min(this.w / w, this.h / h);
           const cx = (a.x ?? 0) + w / 2;
           const cy = (a.y ?? 0) + h / 2;
           const dur = ((a.frames ?? 30) * FRAME_MS) / speed;
           const s0 = this.world.scale.x;
           const p0x = this.world.pivot.x;
           const p0y = this.world.pivot.y;
-          const px = full ? 0 : cx - STAGE_W / 2 / scale;
-          const py = full ? 0 : cy - STAGE_H / 2 / scale;
+          const px = full ? 0 : cx - this.w / 2 / scale;
+          const py = full ? 0 : cy - this.h / 2 / scale;
           await this.tween(
             dur,
             (k) => {
@@ -386,7 +409,7 @@ export class PixiStage {
     const dur = fade ? this.takeDurationMs(20, speed) : 0;
     // crossfade: new texture on bgB over bgA, then swap roles
     this.bgB.texture = tex;
-    this.bgB.y = Math.max(0, STAGE_H - tex.height);
+    this.bgB.y = Math.max(0, this.h - tex.height);
     this.bgB.visible = true;
     this.bgB.alpha = 0;
     const fillWas = this.fillRect.alpha;
@@ -418,8 +441,8 @@ export class PixiStage {
     const tex = await this.texture(layer.file, resolveUrl);
     if (!tex) return;
     let sp = this.slots.get(slot);
-    const targetX = layer.x ?? Math.round((STAGE_W - tex.width) / 2);
-    const targetY = STAGE_H - tex.height;
+    const targetX = layer.x ?? Math.round((this.w - tex.width) / 2);
+    const targetY = this.h - tex.height;
     const dur = mode ? this.takeDurationMs(12, speed) : 0;
     if (!sp) {
       sp = new Sprite(tex);
@@ -441,7 +464,7 @@ export class PixiStage {
       ghost.zIndex = sp.zIndex;
       this.spriteLayer.addChild(ghost);
       sp.texture = tex;
-      sp.y = STAGE_H - tex.height;
+      sp.y = this.h - tex.height;
       sp.alpha = 0;
       await this.tween(
         dur,
@@ -468,71 +491,87 @@ export class PixiStage {
   }
 
   // ---------------------------------------------------------------- effects
-  /** Route-reachable effect ids only; all approximations (see sc3-format.md). */
+  /**
+   * Effect ids are game data; the profile maps each id to one of the
+   * renderer's visual primitives (all approximations). Unmapped ids are
+   * recorded in activeEffects but draw nothing.
+   */
   private effectOn(effect: number | null, instant: boolean): void {
     if (effect === null) return;
     this.activeEffects.add(effect);
-    switch (effect) {
-      case 46: // flash
+    const visual = this.effects.on[effect];
+    if (!visual) return;
+    switch (visual.type) {
+      case "flash":
         if (!instant) {
           this.flashRect.alpha = 1;
           void this.tween(220, (k) => (this.flashRect.alpha = 1 - k), false);
         }
         break;
-      case 45: // blink (pulsing dark tint; handled in tick)
-        this.tintRect.alpha = 0.3;
+      case "tint":
+        this.tintRect.clear().rect(0, 0, this.w, this.h).fill(visual.color);
+        this.tintRect.alpha = visual.alpha;
         break;
-      case 44: // filter
-      case 32:
-        this.tintRect.alpha = 0.35;
-        break;
-      case 12: // quake (params in vars 571-576; amplitude approximated)
-      case 4: // QUA1
-      case 5: // QUA2
-        this.shakeAmp = instant ? 0 : effect === 12 ? 14 : 8;
+      case "quake":
+        this.shakeAmp = instant ? 0 : visual.amplitude;
         this.shakeTime = 0;
         break;
-      case 27: // sunbeams
-        this.beamRect.alpha = 0.18;
+      case "overlay": {
+        const rect = visual.layer === "beams" ? this.beamRect : this.fogRect;
+        rect.clear().rect(0, 0, this.w, this.h).fill(visual.color);
+        rect.alpha = visual.alpha;
         break;
-      case 19: // fog
-        this.fogRect.alpha = 0.3;
-        break;
-      case 41: {
-        // snow: deterministic particle field
+      }
+      case "particles": {
+        // deterministic particle field (seeded PRNG, reproducible in shots)
         this.snow.removeChildren();
-        for (let i = 0; i < 80; i++) {
+        for (let i = 0; i < visual.count; i++) {
           const flake = new Sprite(Texture.WHITE);
           flake.width = flake.height = 2 + this.rand() * 3;
-          flake.x = this.rand() * STAGE_W;
-          flake.y = this.rand() * STAGE_H;
+          flake.x = this.rand() * this.w;
+          flake.y = this.rand() * this.h;
           flake.alpha = 0.4 + this.rand() * 0.6;
           this.snow.addChild(flake);
         }
         break;
       }
-      default:
-        // 47/48/49 map eyecatch/pins/route and unknown ids: recorded, no visual
+    }
+  }
+
+  private clearEffect(target: EffectClear): void {
+    switch (target) {
+      case "tint":
+        this.tintRect.alpha = 0;
+        for (const id of [...this.activeEffects]) {
+          if (this.effects.on[id]?.type === "tint") this.activeEffects.delete(id);
+        }
+        break;
+      case "beams":
+        this.beamRect.alpha = 0;
+        break;
+      case "fog":
+        this.fogRect.alpha = 0;
+        break;
+      case "particles":
+        this.snow.removeChildren();
+        break;
+      case "quake":
+        this.shakeAmp = 0;
+        break;
+      case "all":
+        this.shakeAmp = 0;
+        this.activeEffects.clear();
         break;
     }
   }
 
   private effectOff(category: number | null): void {
-    // category -> effect mapping is incomplete (docs); clear conservatively
-    const clearTint = category === 13 || category === 11 || category === 15 || category === 16 || category === null;
-    if (clearTint) {
-      this.tintRect.alpha = 0;
-      this.activeEffects.delete(44);
-      this.activeEffects.delete(32);
-      this.activeEffects.delete(45);
+    if (category === null) {
+      // a null category clears everything the renderer can show
+      for (const t of ["tint", "beams", "fog", "particles", "all"] as const) this.clearEffect(t);
+      return;
     }
-    if (category === 7 || category === null) this.beamRect.alpha = 0;
-    if (category === 6 || category === null) this.fogRect.alpha = 0; // rain category; fog shares
-    if (category === 14 || category === null) this.snow.removeChildren();
-    if (category === 0 || category === null) {
-      this.shakeAmp = 0;
-      this.activeEffects.clear();
-    }
+    for (const target of this.effects.off[category] ?? []) this.clearEffect(target);
   }
 
   // ---------------------------------------------------------------- settle
@@ -554,7 +593,7 @@ export class PixiStage {
       const tex = await this.texture(state.background.file, resolveUrl);
       if (tex && this.bgA.texture !== tex) {
         this.bgA.texture = tex;
-        this.bgA.y = Math.max(0, STAGE_H - tex.height);
+        this.bgA.y = Math.max(0, this.h - tex.height);
       }
       this.bgA.visible = true;
       this.bgA.alpha = 1;
@@ -564,7 +603,7 @@ export class PixiStage {
       this.bgA.visible = this.bgB.visible = false;
       this.fillRect
         .clear()
-        .rect(0, 0, STAGE_W, STAGE_H)
+        .rect(0, 0, this.w, this.h)
         .fill(state.fill === 1 ? 0xffffff : 0x000000);
       this.fillRect.alpha = 1;
     }
@@ -589,8 +628,8 @@ export class PixiStage {
         sp.texture = tex;
       }
       sp.alpha = 1;
-      sp.x = layer.x ?? Math.round((STAGE_W - tex.width) / 2);
-      sp.y = STAGE_H - tex.height;
+      sp.x = layer.x ?? Math.round((this.w - tex.width) / 2);
+      sp.y = this.h - tex.height;
     }
   }
 

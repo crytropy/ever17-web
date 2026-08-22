@@ -1,19 +1,21 @@
 /**
- * Minimal playable browser client over the vn-runtime GameSession API.
+ * Playable browser client over the kid-runtime GameSession API.
  *
- * Consumes exactly what the toolchain emits - /ir/<scene>.json and
- * /assets/manifest.json - and contains no scene-specific logic: the starting
- * scene comes from the URL, everything else from the data.
+ * Consumes exactly what a game package serves - /game.json (metadata +
+ * GameProfile), /ir/<scene>.json and /assets/manifest.json - and contains no
+ * game- or scene-specific logic: the starting scene, canvas geometry, effect
+ * semantics and storage namespace all come from the package metadata.
  *
  * Player features: click/Enter advance, choices, backlog (L), auto mode (A,
- * paced by manifest voice durations), skip mode (hold Ctrl or toggle), one
- * localStorage save slot with identical-resume semantics (pinned by the
- * runtime's save/resume tests).
+ * paced by manifest voice durations), skip mode (hold Ctrl or toggle),
+ * multi-slot localStorage saves with identical-resume semantics (pinned by
+ * the runtime's save/resume tests).
  */
 import { GameSession, type AsyncSceneSource, type SessionEvent } from "kid-runtime";
 import type { AssetIndex, AssetManifest, ManifestEntry } from "kid-runtime";
+import { DEFAULT_GAME_PROFILE, type GamePackageMeta } from "kid-contracts";
 import { PixiStage } from "kid-renderer-pixi";
-import { DEFAULT_CONFIG, loadConfig, saveConfig, type VnConfig } from "./config.js";
+import { loadConfig, saveConfig, type VnConfig } from "./config.js";
 import { ALL_SLOTS, AUTO_SLOT, QUICK_SLOT, SaveSlots, type SlotMeta } from "./slots.js";
 import { CompletionTracker, IdbCompletionStore } from "./completion.js";
 import { matchEndings, type RouteGraphJson } from "kid-graph/model";
@@ -51,8 +53,11 @@ const menuTitleEl = menuEl.querySelector("#menu-title") as HTMLElement;
 const menuSlotsEl = menuEl.querySelector("#menu-slots") as HTMLElement;
 const settingsEl = $("settings");
 
+/** Canvas size; replaced by the game profile's before the player boots. */
+let stageSize = { ...DEFAULT_GAME_PROFILE.canvas };
+
 function fitStage(): void {
-  const s = Math.min(window.innerWidth / 800, window.innerHeight / 600);
+  const s = Math.min(window.innerWidth / stageSize.width, window.innerHeight / stageSize.height);
   stage.style.transform = `scale(${s})`;
 }
 window.addEventListener("resize", fitStage);
@@ -146,8 +151,9 @@ class AudioBox {
 class WebPlayer {
   private session: GameSession | null = null;
   private stage: PixiStage | null = null;
-  private slots = new SaveSlots(localStorage);
-  private config: VnConfig = loadConfig(localStorage);
+  private readonly ns: string;
+  private slots: SaveSlots;
+  private config: VnConfig;
   /** Completion tracking (scenes/choices/endings/assets), separate from saves. */
   private tracker: CompletionTracker | null = null;
   /** Movies played since the last choice - identifies the ending reached. */
@@ -164,7 +170,13 @@ class WebPlayer {
   private skip = false;
   private autoTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(private readonly assetsBase: string) {
+  constructor(
+    private readonly assetsBase: string,
+    private readonly meta: GamePackageMeta,
+  ) {
+    this.ns = meta.profile.storageNamespace;
+    this.slots = new SaveSlots(localStorage, this.ns);
+    this.config = loadConfig(localStorage, this.ns);
     window.vnAssetsBase = assetsBase;
     textboxEl.addEventListener("click", () => this.advance());
     document.addEventListener("keydown", (e) => {
@@ -241,7 +253,7 @@ class WebPlayer {
       input.oninput = () => {
         (this.config[key] as number) = Number(input.value);
         label.textContent = input.value;
-        saveConfig(localStorage, this.config);
+        saveConfig(localStorage, this.ns, this.config);
         this.applyConfig();
       };
     };
@@ -474,7 +486,7 @@ class WebPlayer {
           this.audio.playSe(
             `${this.assetsBase}/${entry.file}`,
             op.arg1 ?? 0,
-            op.asset.toUpperCase().endsWith("L"),
+            this.seLoops(op.asset),
           );
         }
       } else if (op.op === "playMovie" && op.asset) {
@@ -582,14 +594,20 @@ class WebPlayer {
     });
   }
 
+  /** SE assets whose name ends with the profile's loop suffix loop forever. */
+  private seLoops(asset: string): boolean {
+    const suffix = this.meta.profile.seLoopSuffix;
+    return !!suffix && asset.toLowerCase().endsWith(suffix.toLowerCase());
+  }
+
   async boot(): Promise<void> {
     const manifest = (await (await fetch(`${this.assetsBase}/manifest.json`)).json()) as AssetManifest;
     this.assets = new WebAssets(manifest);
     this.source = new WebSceneSource(this.assets);
-    this.stage = await PixiStage.create(pixiParent);
-    this.tracker = await CompletionTracker.open(new IdbCompletionStore()).catch(() => null);
+    this.stage = await PixiStage.create(pixiParent, this.meta.profile);
+    this.tracker = await CompletionTracker.open(new IdbCompletionStore(this.ns)).catch(() => null);
     const params = new URLSearchParams(location.search);
-    const start = params.get("start") ?? "op00";
+    const start = params.get("start") ?? this.meta.startScene;
     await new Promise<void>((resolve) => {
       titleEl.addEventListener("click", () => {
         titleEl.classList.add("hidden");
@@ -604,4 +622,12 @@ class WebPlayer {
 if ("serviceWorker" in navigator) {
   void navigator.serviceWorker.register("sw.js").catch(() => {});
 }
-void new WebPlayer("assets").boot();
+
+/** Load the game package metadata, then boot the player against it. */
+async function bootPlayer(): Promise<void> {
+  const meta = (await (await fetch("game.json")).json()) as GamePackageMeta;
+  stageSize = { ...meta.profile.canvas };
+  fitStage();
+  await new WebPlayer("assets", meta).boot();
+}
+void bootPlayer();

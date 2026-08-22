@@ -9,6 +9,8 @@ import type { RouteGraphJson } from "kid-graph/model";
 import { renderGraphViewer } from "kid-graph/viewer";
 import { explainEnding, formatExplanation } from "kid-graph/explain";
 import type { ExplorationResult } from "kid-graph/exploration-types";
+import type { GamePackageMeta } from "kid-contracts";
+import { DEFAULT_GAME_PROFILE } from "kid-contracts";
 import { CompletionTracker, IdbCompletionStore } from "./completion.js";
 
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
@@ -18,11 +20,15 @@ function pct(n: number, d: number): string {
 }
 
 async function main(): Promise<void> {
+  const meta = await fetch("game.json")
+    .then((r) => (r.ok ? (r.json() as Promise<GamePackageMeta>) : null))
+    .catch(() => null);
+  const ns = meta?.profile.storageNamespace ?? DEFAULT_GAME_PROFILE.storageNamespace;
   const graph = (await (await fetch("graph.json")).json()) as RouteGraphJson;
   const exploration = await fetch("exploration.json")
     .then((r) => (r.ok ? (r.json() as Promise<ExplorationResult>) : null))
     .catch(() => null);
-  const tracker = await CompletionTracker.open(new IdbCompletionStore()).catch(() => null);
+  const tracker = await CompletionTracker.open(new IdbCompletionStore(ns)).catch(() => null);
 
   const completion = tracker
     ? { scenes: tracker.scenes, endings: tracker.endings }

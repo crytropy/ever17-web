@@ -42,13 +42,14 @@ export async function captureFixtures(
   manifestPath: string,
   startScene: string,
   maxEvents = 20_000,
+  profile?: import("kid-contracts/profile").GameProfile,
 ): Promise<ShotFixture[]> {
   const assets = new AssetResolver(manifestPath);
   const source = {
     load: (n: string) => fsSceneSource(irDir).load(n),
     assets: () => assets,
   };
-  const session = await GameSession.start(source, startScene);
+  const session = await GameSession.start(source, startScene, profile ? { vm: { profile } } : {});
   const found = new Map<string, ShotFixture>();
   for (let i = 0; i < maxEvents && found.size < PREDICATES.length; i++) {
     const raw = await session.next();

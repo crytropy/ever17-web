@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { SessionRunner } from "kid-runtime";
+import type { GameProfile } from "kid-contracts/profile";
 import { fsSceneSource } from "kid-runtime/node";
 import type { IrScene } from "kid-contracts/ir";
 import { buildGraphModel } from "./build.js";
@@ -21,6 +22,7 @@ function usage(): never {
 
 usage:
   vn graph <irDir> [-o out] [--format json|dot|html] [--start s]
+  (--start is required unless the calling CLI supplies a game default)
                    [--dot out.dot] [--exploration file] [--no-traversals]
   vn endings <irDir> [--start s] [--exploration file]
   vn explore <irDir> [-o out.json] [--start s] [--max-states n] [--max-sessions n]
@@ -46,13 +48,13 @@ interface Args {
   playthroughs: number;
 }
 
-function parseArgs(argv: string[]): Args {
+function parseArgs(argv: string[], defaultStart: string | undefined): Args {
   const a: Args = {
     cmd: "",
     positional: [],
     out: "",
     format: "json",
-    start: "op00",
+    start: defaultStart ?? "",
     dot: null,
     exploration: null,
     traversals: true,
@@ -66,7 +68,7 @@ function parseArgs(argv: string[]): Args {
     const arg = argv[i]!;
     if (arg === "-o") a.out = argv[++i] ?? "";
     else if (arg === "--format") a.format = argv[++i] ?? "json";
-    else if (arg === "--start") a.start = argv[++i] ?? "op00";
+    else if (arg === "--start") a.start = argv[++i] ?? "";
     else if (arg === "--dot") a.dot = argv[++i] ?? null;
     else if (arg === "--exploration") a.exploration = argv[++i] ?? null;
     else if (arg === "--no-traversals") a.traversals = false;
@@ -101,27 +103,46 @@ function loadExploration(path: string | null): ExplorationResult | null {
   return data;
 }
 
-function buildModel(irDir: string, start: string, exploration: ExplorationResult | null): RouteGraphModel {
-  const model = buildGraphModel(loadScenes(irDir), start);
+function buildModel(
+  irDir: string,
+  start: string,
+  exploration: ExplorationResult | null,
+  profile?: GameProfile,
+): RouteGraphModel {
+  const model = buildGraphModel(loadScenes(irDir), start, profile);
   if (exploration) applyExploration(model, exploration);
   return model;
 }
 
+/** Game-specific defaults a product CLI can inject (the graph tools
+ * themselves hardcode no game's start scene or ending patterns). */
+export interface GraphCliDefaults {
+  start?: string;
+  profile?: GameProfile;
+}
+
 /** Shared command implementation; used directly and via the vn CLI. */
-export async function runGraphCli(argv: string[]): Promise<number> {
-  const a = parseArgs(argv);
+export async function runGraphCli(argv: string[], defaults: GraphCliDefaults = {}): Promise<number> {
+  const a = parseArgs(argv, defaults.start);
   const irDir = a.positional[0];
+  if (a.cmd && a.cmd !== "help" && !a.start) {
+    console.error("no start scene: pass --start <scene> (no game default is built in)");
+    return 2;
+  }
 
   if (a.cmd === "graph") {
     if (!irDir) usage();
     const exploration = loadExploration(a.exploration);
-    const model = buildModel(irDir, a.start, exploration);
+    const model = buildModel(irDir, a.start, exploration, defaults.profile);
     let traversals: Record<string, { route: string[]; end: string }> | undefined;
     if (a.traversals) {
       const source = fsSceneSource(irDir);
       traversals = {};
       for (const label of ["first", "last"] as const) {
-        const r = new SessionRunner(source, { policy: label }).run(a.start);
+        const r = new SessionRunner(source, {
+          policy: label,
+          ...(defaults.profile ? { endingScenes: defaults.profile.endingScenePatterns, vm: { profile: defaults.profile } } : {}),
+        }).run(a.start);
         traversals[label] = { route: r.route, end: `${r.end}:${r.scenes[r.scenes.length - 1]?.scene ?? "?"}` };
       }
       for (const t of model.transitions) {
@@ -174,7 +195,7 @@ export async function runGraphCli(argv: string[]): Promise<number> {
   if (a.cmd === "endings") {
     if (!irDir) usage();
     const exploration = loadExploration(a.exploration);
-    const model = buildModel(irDir, a.start, exploration);
+    const model = buildModel(irDir, a.start, exploration, defaults.profile);
     const report = endingReport(model, exploration);
     console.log(`Detected endings (${report.endings.length}):\n`);
     for (const e of report.endings) {
@@ -257,7 +278,7 @@ export async function runGraphCli(argv: string[]): Promise<number> {
       console.error(`explain-ending needs exploration data - run: vn explore ${irDir} -o build/exploration.json`);
       return 1;
     }
-    const model = buildModel(irDir, a.start, exploration);
+    const model = buildModel(irDir, a.start, exploration, defaults.profile);
     const x = explainEnding(toJson(model), exploration, endingId);
     if (!x) {
       console.error(`no explored ending "${endingId}". Known: ${exploration.endings.map((e) => e.id).join(", ")}`);

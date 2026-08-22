@@ -1,5 +1,7 @@
 import { evaluateCondition, MOD_ADD, MOD_ASSIGN } from "./conditions.js";
 import type { VmSaveState } from "kid-contracts/save";
+import { DEFAULT_GAME_PROFILE, type GameProfile } from "kid-contracts/profile";
+import { bgmAssetName } from "kid-contracts/scene-assets";
 import type {
   AssetIndex,
   ChoiceEvent,
@@ -13,24 +15,13 @@ import type {
   SceneStateSnapshot,
 } from "./types.js";
 
-/**
- * Sprite x operands are expressed in a 640-wide logical space (320 = centre);
- * the shipped artwork is 800x600. A sprite's PRT header carries the x offset of
- * its trimmed bitmap inside that nominal frame, so:
- *
- *   screenX = baseLeftOffset * (SCREEN_W / nominalWidth)
- *           + (spriteX - LOGICAL_CENTRE) * (SCREEN_W / LOGICAL_W)
- *
- * Confidence: Medium. Derived from the PRT anchor fields and the fact that the
- * overwhelmingly common operand 320 reproduces each sprite's authored position
- * exactly; other operands (128/176/464/512) then place sprites symmetrically.
- */
-export const SCREEN_W = 800;
-export const SCREEN_H = 600;
-const LOGICAL_W = 640;
-const LOGICAL_CENTRE = 320;
-
 export interface VmOptions {
+  /**
+   * Game-specific interpretation constants (canvas size, sprite logical
+   * width, BGM track naming). Defaults to the neutral kid-contracts profile;
+   * adapters pass their game's profile.
+   */
+  profile?: GameProfile;
   /** Called for each op that the VM does not present (effects, waits, unknowns). */
   onOp?: (op: IrOp, block: string) => void;
   /** Safety valve against a malformed/cyclic IR; counted in executed ops. */
@@ -76,6 +67,7 @@ export class SceneVm {
   readonly scene: IrScene;
   private readonly assets: AssetIndex;
   private readonly opts: VmOptions;
+  private readonly profile: GameProfile;
 
   /** Current block label and index of the next op inside it. */
   private block: string;
@@ -94,6 +86,7 @@ export class SceneVm {
     this.scene = scene;
     this.assets = assets;
     this.opts = opts;
+    this.profile = opts.profile ?? DEFAULT_GAME_PROFILE;
     this.vars = opts.vars ?? new Map();
     this.sysVars = opts.sysVars ?? new Map();
     const resume = opts.resume;
@@ -188,13 +181,26 @@ export class SceneVm {
     };
   }
 
+  /**
+   * Sprite x operands are expressed in the profile's logical width (centre =
+   * half); the asset's baseLeftOffset carries the x offset of its trimmed
+   * bitmap inside that nominal frame, so:
+   *
+   *   screenX = baseLeftOffset + (spriteX - logicalW/2) * (canvasW / logicalW)
+   *
+   * Confidence: Medium. Derived from the PRT anchor fields and the fact that
+   * the overwhelmingly common centre operand reproduces each sprite's
+   * authored position exactly; other operands then place sprites
+   * symmetrically.
+   */
   private layerFor(asset: string | null, slot: number | null, x: number | null): LayerState {
     const name = asset ?? "<unresolved>";
     const entry = this.assets.get(name);
     let screenX: number | null = null;
     if (entry?.width != null && x != null) {
       const anchor = entry.baseLeftOffset ?? 0;
-      screenX = Math.round(anchor + (x - LOGICAL_CENTRE) * (SCREEN_W / LOGICAL_W));
+      const logicalW = this.profile.spriteLogicalWidth;
+      screenX = Math.round(anchor + (x - logicalW / 2) * (this.profile.canvas.width / logicalW));
     }
     return {
       asset: name,
@@ -340,7 +346,7 @@ export class SceneVm {
         }
 
         case "playBGM": {
-          this.state.bgm = op.track != null ? `bgm${String(op.track).padStart(2, "0")}` : null;
+          this.state.bgm = op.track != null ? bgmAssetName(op.track, this.profile) : null;
           this.opts.onOp?.(op, this.block);
           break;
         }

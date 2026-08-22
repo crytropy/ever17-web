@@ -1,12 +1,12 @@
 {
-  "name": "Ever17 vn-runtime",
-  "short_name": "vn-runtime",
-  "description": "Data-driven visual novel runtime (user-supplied game files)",
+  "name": "{{PWA_NAME}}",
+  "short_name": "{{PWA_SHORT_NAME}}",
+  "description": "Web KID Engine player (user-supplied game files)",
   "start_url": "./",
   "display": "fullscreen",
   "orientation": "landscape",
-  "background_color": "#000814",
-  "theme_color": "#000814",
+  "background_color": "{{THEME_COLOR}}",
+  "theme_color": "{{THEME_COLOR}}",
   "icons": [
     { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }

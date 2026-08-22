@@ -2,9 +2,9 @@
  * output (IR JSON and converted assets). The shell itself is network-first so
  * code updates land on the next reload; the cache is the offline fallback.
  * Bump VERSION to invalidate pipeline data. */
-const VERSION = "e17vn-v3";
+const VERSION = "{{SW_CACHE}}";
 const SHELL = ["./", "index.html", "bundle.js", "manifest.webmanifest", "icon-192.png", "icon-512.png",
-  "routes", "routes.html", "routes-bundle.js", "graph.json"];
+  "routes", "routes.html", "routes-bundle.js", "graph.json", "game.json"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

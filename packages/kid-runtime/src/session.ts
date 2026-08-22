@@ -28,6 +28,14 @@ export interface SessionOptions {
   maxScenes?: number;
   maxLinesPerScene?: number;
   onEvent?: (scene: string, ev: PlayerEvent) => void;
+  /**
+   * Case-insensitive regex sources naming the game's terminal story scenes
+   * (GameProfile.endingScenePatterns). A scene matching one of these that
+   * terminates without a transition is classified "ending"; any other
+   * transitionless termination is reported as a softlock. Empty = every
+   * termination is a softlock.
+   */
+  endingScenes?: string[];
   vm?: VmOptions;
 }
 
@@ -67,12 +75,14 @@ export interface SessionResult {
 export class SessionRunner {
   private readonly source: SceneSource;
   private readonly opts: SessionOptions;
+  private readonly endingScenes: RegExp[];
   readonly vars = new Map<number, number>();
   readonly sysVars = new Map<number, number>();
 
   constructor(source: SceneSource, opts: SessionOptions = {}) {
     this.source = source;
     this.opts = opts;
+    this.endingScenes = (opts.endingScenes ?? []).map((src) => new RegExp(src, "i"));
   }
 
   private pickOption(scene: string, ev: ChoiceEvent): number {
@@ -188,10 +198,10 @@ export class SessionRunner {
         return { scenes, route, end: "limit", endDetail: `${summary.exit} in ${scene.scene}`, vars: this.vars, gaps, totalLines };
       }
       if (nextScene === null) {
-        // Scene ended without a transition: an ending if it is a terminal
-        // story scene (endings/epilogues have no outgoing GOTO), otherwise a
-        // softlock worth reporting.
-        const isEnding = /(ep|bd|_ed)$/i.test(scene.scene) || scene.scene.toLowerCase() === "y_ed";
+        // Scene ended without a transition: an ending if the game profile
+        // marks it as a terminal story scene (endings/epilogues have no
+        // outgoing GOTO), otherwise a softlock worth reporting.
+        const isEnding = this.endingScenes.some((re) => re.test(scene.scene));
         return {
           scenes,
           route,

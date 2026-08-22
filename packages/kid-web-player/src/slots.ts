@@ -21,38 +21,46 @@ export const AUTO_SLOT = "auto";
 export const QUICK_SLOT = "quick";
 export const ALL_SLOTS: readonly string[] = [AUTO_SLOT, QUICK_SLOT, ...MANUAL_SLOTS];
 
-const PREFIX = "e17vn:save:";
-const INDEX_KEY = "e17vn:slots";
-const LEGACY_KEY = "e17vn:slot0";
-
 interface StoredSlot {
   meta: SlotMeta;
   save: SessionSave;
 }
 
 export class SaveSlots {
-  constructor(private readonly storage: StorageLike) {
+  /** `${ns}:save:<slot>` payloads, `${ns}:slots` index. */
+  private readonly prefix: string;
+  private readonly indexKey: string;
+  private readonly legacyKey: string;
+
+  constructor(
+    private readonly storage: StorageLike,
+    /** Game storage namespace (GameProfile.storageNamespace). */
+    ns: string,
+  ) {
+    this.prefix = `${ns}:save:`;
+    this.indexKey = `${ns}:slots`;
+    this.legacyKey = `${ns}:slot0`;
     this.migrateLegacy();
   }
 
   /** Move the phase-4A single slot into manual slot 1, once. */
   private migrateLegacy(): void {
     try {
-      const legacy = this.storage.getItem(LEGACY_KEY);
+      const legacy = this.storage.getItem(this.legacyKey);
       if (!legacy) return;
       const parsed = JSON.parse(legacy) as { label?: string; savedAt?: number; save: SessionSave };
-      if (parsed?.save?.format === SAVE_FORMAT && !this.storage.getItem(PREFIX + "1")) {
+      if (parsed?.save?.format === SAVE_FORMAT && !this.storage.getItem(this.prefix + "1")) {
         this.put("1", parsed.save, undefined, parsed.savedAt);
       }
-      this.storage.removeItem(LEGACY_KEY);
+      this.storage.removeItem(this.legacyKey);
     } catch {
-      this.storage.removeItem(LEGACY_KEY);
+      this.storage.removeItem(this.legacyKey);
     }
   }
 
   private readIndex(): string[] {
     try {
-      const raw = this.storage.getItem(INDEX_KEY);
+      const raw = this.storage.getItem(this.indexKey);
       const arr = raw ? (JSON.parse(raw) as string[]) : [];
       return Array.isArray(arr) ? arr.filter((s) => ALL_SLOTS.includes(s)) : [];
     } catch {
@@ -61,7 +69,7 @@ export class SaveSlots {
   }
 
   private writeIndex(slots: string[]): void {
-    this.storage.setItem(INDEX_KEY, JSON.stringify([...new Set(slots)]));
+    this.storage.setItem(this.indexKey, JSON.stringify([...new Set(slots)]));
   }
 
   /** Metadata of every occupied slot, in ALL_SLOTS order. */
@@ -76,7 +84,7 @@ export class SaveSlots {
 
   peek(slot: string): SlotMeta | null {
     try {
-      const raw = this.storage.getItem(PREFIX + slot);
+      const raw = this.storage.getItem(this.prefix + slot);
       if (!raw) return null;
       const stored = JSON.parse(raw) as StoredSlot;
       if (stored?.save?.format !== SAVE_FORMAT) return null;
@@ -98,12 +106,12 @@ export class SaveSlots {
     };
     const stored: StoredSlot = { meta, save };
     try {
-      this.storage.setItem(PREFIX + slot, JSON.stringify(stored));
+      this.storage.setItem(this.prefix + slot, JSON.stringify(stored));
     } catch (err) {
       // storage quota: retry without the thumbnail before giving up
       if (thumb) {
         const { thumb: _dropped, ...lean } = meta;
-        this.storage.setItem(PREFIX + slot, JSON.stringify({ meta: lean, save }));
+        this.storage.setItem(this.prefix + slot, JSON.stringify({ meta: lean, save }));
         this.writeIndex([...this.readIndex(), slot]);
         return lean;
       }
@@ -115,7 +123,7 @@ export class SaveSlots {
 
   get(slot: string): SessionSave | null {
     try {
-      const raw = this.storage.getItem(PREFIX + slot);
+      const raw = this.storage.getItem(this.prefix + slot);
       if (!raw) return null;
       const stored = JSON.parse(raw) as StoredSlot;
       return stored?.save?.format === SAVE_FORMAT ? stored.save : null;
@@ -125,7 +133,7 @@ export class SaveSlots {
   }
 
   remove(slot: string): void {
-    this.storage.removeItem(PREFIX + slot);
+    this.storage.removeItem(this.prefix + slot);
     this.writeIndex(this.readIndex().filter((s) => s !== slot));
   }
 }

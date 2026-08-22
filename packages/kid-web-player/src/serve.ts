@@ -4,6 +4,7 @@ import { basename, extname, join, normalize, resolve } from "node:path";
 import { buildSync } from "esbuild";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
+import type { GamePackageMeta } from "kid-contracts";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -20,23 +21,54 @@ const MIME: Record<string, string> = {
 export interface ServeOptions {
   irDir: string;
   assetsDir: string;
+  /** Game package metadata; served as /game.json and used to brand the shell. */
+  meta: GamePackageMeta;
   port?: number;
+  /** Bind address. Local-only by default; never expose game content publicly. */
+  host?: string;
   /** Fixture list served to the /shots.html harness. */
   fixturesPath?: string;
   /** Where the harness's POSTed PNGs are written. */
   shotsOutDir?: string;
   /** Exploration data for /routes (default: build/exploration.json if present). */
   explorationPath?: string;
+  /**
+   * Lazy asset conversion: called when a request under /assets misses on
+   * disk. Returns the absolute path of the file it materialized (adapters
+   * decode from the original archives into the cache here), or null.
+   */
+  materializeAsset?: (relPath: string) => string | null | Promise<string | null>;
+  onReady?: (url: string) => void;
+}
+
+/** Fill the {{PLACEHOLDER}}s of the static shell from the game metadata. */
+function renderTemplate(raw: string, meta: GamePackageMeta): string {
+  const b = meta.branding;
+  const vars: Record<string, string> = {
+    GAME_TITLE: b?.title ?? meta.title,
+    GAME_SUBTITLE: b?.subtitle ?? "",
+    GAME_HINT: b?.hint ?? "click to start",
+    GAME_LANG: b?.lang ?? "en",
+    THEME_COLOR: b?.themeColor ?? "#000814",
+    PWA_NAME: b?.pwaName ?? b?.title ?? meta.title,
+    PWA_SHORT_NAME: b?.pwaShortName ?? b?.title ?? meta.title,
+    STAGE_W: String(meta.profile.canvas.width),
+    STAGE_H: String(meta.profile.canvas.height),
+    SW_CACHE: `${meta.profile.storageNamespace}-v3`,
+  };
+  return raw.replace(/\{\{([A-Z_]+)\}\}/g, (m, key: string) => vars[key] ?? m);
 }
 
 /**
- * Bundle the web client and serve it together with the IR and the extracted
- * assets. Static only - the client fetches /ir/<scene>.json and /assets/...
+ * Bundle the web client and serve it together with the game package: the
+ * metadata (/game.json), the IR (/ir/...) and the converted assets
+ * (/assets/...). Static only - plus the optional materializeAsset hook that
+ * lets an adapter convert assets on first request.
  */
 export function serve(opts: ServeOptions): void {
   const webDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "web");
   const bundlePath = join(webDir, "bundle.js");
-  const webSrc = resolve(dirname(fileURLToPath(import.meta.url)), "web");
+  const webSrc = resolve(dirname(fileURLToPath(import.meta.url)));
   buildSync({
     entryPoints: [join(webSrc, "main.ts")],
     bundle: true,
@@ -73,9 +105,13 @@ export function serve(opts: ServeOptions): void {
   const fixturesPath = opts.fixturesPath ?? resolve("packages", "kid-runtime", "test", "__shots__", "fixtures.json");
   const shotsOutDir = opts.shotsOutDir ?? resolve("build", "shots", "current");
   const explorationPath = opts.explorationPath ?? resolve("build", "exploration.json");
+  const gameJson = JSON.stringify(opts.meta, null, 1);
+  /** Files whose contents carry {{...}} branding placeholders. */
+  const TEMPLATED = new Set(["index.html", "routes.html", "shots.html", "manifest.webmanifest", "sw.js"]);
+  const templateCache = new Map<string, string>();
 
   // Route graph for /routes: built once from the IR on first request (the
-  // graph logic lives in vn-graph; this server only serializes it).
+  // graph logic lives in kid-graph; this server only serializes it).
   let graphJson: string | null = null;
   const buildGraph = async (): Promise<string> => {
     if (graphJson) return graphJson;
@@ -88,7 +124,7 @@ export function serve(opts: ServeOptions): void {
       const s = source.load(f.replace(/\.json$/, ""));
       if (s) scenes.set(s.scene.toLowerCase(), s);
     }
-    const model = buildGraphModel(scenes, "op00");
+    const model = buildGraphModel(scenes, opts.meta.startScene, opts.meta.profile);
     if (existsSync(explorationPath)) {
       applyExploration(model, JSON.parse(readFileSync(explorationPath, "utf8")));
     }
@@ -98,6 +134,12 @@ export function serve(opts: ServeOptions): void {
 
   const server = createServer((req, res) => {
     const url = (req.url ?? "/").split("?")[0]!;
+
+    if (url === "/game.json") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(gameJson);
+      return;
+    }
 
     // ------------- route explorer endpoints
     if (url === "/graph.json") {
@@ -154,35 +196,89 @@ export function serve(opts: ServeOptions): void {
       });
       return;
     }
+
     let filePath: string | null = null;
+    let assetRel: string | null = null;
     for (const [prefix, root] of Object.entries(roots)) {
       if (url.startsWith(prefix + "/")) {
-        const rel = normalize(url.slice(prefix.length + 1));
-        if (!rel.startsWith("..")) filePath = join(root, rel);
+        const rel = normalize(decodeURIComponent(url.slice(prefix.length + 1)));
+        if (!rel.startsWith("..")) {
+          filePath = join(root, rel);
+          if (prefix === "/assets") assetRel = rel;
+        }
         break;
       }
     }
+    let templateName: string | null = null;
     if (!filePath) {
       const rel = url === "/" ? "index.html" : url === "/routes" ? "routes.html" : normalize(url.slice(1));
-      if (!rel.startsWith("..")) filePath = join(webDir, rel);
+      if (!rel.startsWith("..")) {
+        filePath = join(webDir, rel);
+        if (TEMPLATED.has(rel)) templateName = rel;
+      }
     }
-    if (!filePath || !existsSync(filePath) || !statSync(filePath).isFile()) {
+
+    const respondFile = (path: string): void => {
+      const type = MIME[extname(path)] ?? "application/octet-stream";
+      if (templateName) {
+        let body = templateCache.get(templateName);
+        if (body === undefined) {
+          body = renderTemplate(readFileSync(path, "utf8"), opts.meta);
+          templateCache.set(templateName, body);
+        }
+        if (req.method === "HEAD") {
+          res.writeHead(200, { "content-type": type, "content-length": Buffer.byteLength(body) });
+          res.end();
+          return;
+        }
+        res.writeHead(200, { "content-type": type });
+        res.end(body);
+        return;
+      }
+      // HEAD support for the client's movie probe
+      if (req.method === "HEAD") {
+        res.writeHead(200, { "content-type": type, "content-length": statSync(path).size });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { "content-type": type });
+      res.end(readFileSync(path));
+    };
+
+    const missing = (): void => {
       res.writeHead(404, { "content-type": "text/plain" });
       res.end(`not found: ${url}`);
+    };
+
+    if (!filePath) {
+      missing();
       return;
     }
-    // HEAD support for the client's movie probe
-    const type = MIME[extname(filePath)] ?? "application/octet-stream";
-    if (req.method === "HEAD") {
-      res.writeHead(200, { "content-type": type, "content-length": statSync(filePath).size });
-      res.end();
+    if (existsSync(filePath) && statSync(filePath).isFile()) {
+      respondFile(filePath);
       return;
     }
-    res.writeHead(200, { "content-type": type });
-    res.end(readFileSync(filePath));
+    // Asset miss: give the adapter a chance to convert it from the originals.
+    if (assetRel && opts.materializeAsset) {
+      Promise.resolve(opts.materializeAsset(assetRel)).then(
+        (produced) => {
+          if (produced && existsSync(produced) && statSync(produced).isFile()) respondFile(produced);
+          else missing();
+        },
+        (err: Error) => {
+          res.writeHead(500, { "content-type": "text/plain" });
+          res.end(`asset conversion failed for ${assetRel}: ${err.message}`);
+        },
+      );
+      return;
+    }
+    missing();
   });
   const port = opts.port ?? 8017;
-  server.listen(port, () => {
-    console.log(`vn-runtime web client: http://localhost:${port}/  (ir=${opts.irDir}, assets=${opts.assetsDir})`);
+  const host = opts.host ?? "127.0.0.1";
+  server.listen(port, host, () => {
+    const url = `http://${host}:${port}/`;
+    console.log(`${opts.meta.title} web player: ${url}  (ir=${opts.irDir}, assets=${opts.assetsDir})`);
+    opts.onReady?.(url);
   });
 }

@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="zh">
+<html lang="{{GAME_LANG}}">
 <head>
 <meta charset="utf-8">
-<title>Ever17 vn-runtime</title>
+<title>{{GAME_TITLE}}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<meta name="theme-color" content="#000814">
+<meta name="theme-color" content="{{THEME_COLOR}}">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-192.png">
 <style>
@@ -14,7 +14,7 @@
                padding:env(safe-area-inset-top) env(safe-area-inset-right)
                        env(safe-area-inset-bottom) env(safe-area-inset-left); }
   #wrap { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
-  #stage { position:relative; width:800px; height:600px; flex:none; overflow:hidden; background:#000;
+  #stage { position:relative; width:{{STAGE_W}}px; height:{{STAGE_H}}px; flex:none; overflow:hidden; background:#000;
            transform-origin:center; }
   #pixi-parent, #movie { position:absolute; inset:0; }
   #pixi-parent canvas { display:block; }
@@ -97,7 +97,7 @@
     <div id="textbox"><div id="speaker"></div><div id="text"></div><div id="more">▼</div></div>
     <div id="choices" class="hidden"></div>
     <div id="backlog" class="hidden"></div>
-    <div id="title"><h1>Ever17</h1><p>-the out of infinity-</p><p id="titlehint">click to start · 点击开始</p></div>
+    <div id="title"><h1>{{GAME_TITLE}}</h1><p>{{GAME_SUBTITLE}}</p><p id="titlehint">{{GAME_HINT}}</p></div>
   </div>
 </div>
 <div id="hud"></div>
