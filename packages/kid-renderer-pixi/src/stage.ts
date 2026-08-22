@@ -99,6 +99,32 @@ export class PixiStage {
   private shakeAmp = 0;
   private rand = lcg(0x1d117);
 
+  /**
+   * How long one texture load may take before it is treated as failed.
+   *
+   * Assets are converted on first request by a local server, so a load that
+   * has not settled in this long is not slow, it is broken (the server died,
+   * or conversion failed in a way that never answers). Waiting forever would
+   * freeze the story mid-line with no explanation; failing lets the scene
+   * continue without that layer and lets the host offer a retry.
+   */
+  assetTimeoutMs = 10_000;
+  /** Notified as texture loads start and finish (pending count). */
+  onAssetActivity: ((pending: number) => void) | null = null;
+  /** Notified when a texture could not be loaded at all. */
+  onAssetError: ((file: string, error: unknown) => void) | null = null;
+  private pending = 0;
+  private failedFiles = new Set<string>();
+  /**
+   * Per-file retry counter, appended to the URL when reloading after a
+   * failure. Loaders cache by URL (and may cache the rejection), so a retry
+   * asks for a genuinely new URL instead of relying on cache eviction.
+   */
+  private retryCount = new Map<string, number>();
+  /** Last picture applied, so failed assets can be retried into place. */
+  private lastState: StageState | null = null;
+  private lastResolveUrl: ((file: string) => string) | null = null;
+
   /** Canvas size from the game profile. */
   private readonly w: number;
   private readonly h: number;
@@ -248,13 +274,71 @@ export class PixiStage {
     return (frames * FRAME_MS) / speed;
   }
 
+  /**
+   * Load a texture, reporting activity and failures.
+   *
+   * Assets are converted from the original archives on first request, so a
+   * load can take a moment (a blank frame the player must not mistake for a
+   * crash) or fail outright (a conversion error worth surfacing). Both are
+   * reported to the host rather than swallowed.
+   */
   private async texture(file: string | null, resolveUrl: (f: string) => string): Promise<Texture | null> {
     if (!file) return null;
+    const attempt = this.retryCount.get(file) ?? 0;
+    const base = resolveUrl(file);
+    const url = attempt === 0 ? base : `${base}${base.includes("?") ? "&" : "?"}retry=${attempt}`;
+    this.pending += 1;
+    this.onAssetActivity?.(this.pending);
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      return (await Assets.load(resolveUrl(file))) as Texture;
-    } catch {
+      const tex = (await Promise.race([
+        Assets.load(url),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`load timed out after ${this.assetTimeoutMs}ms`)),
+            this.assetTimeoutMs,
+          );
+        }),
+      ])) as Texture;
+      this.failedFiles.delete(file);
+      return tex;
+    } catch (err) {
+      this.failedFiles.add(file);
+      this.onAssetError?.(file, err);
       return null;
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      this.pending -= 1;
+      this.onAssetActivity?.(this.pending);
     }
+  }
+
+  /** Files whose most recent load attempt failed. */
+  get failed(): string[] {
+    return [...this.failedFiles];
+  }
+
+  /**
+   * Drop failed loads from the cache and rebuild the current picture. Used by
+   * the host's "retry" affordance after an asset conversion error.
+   * Resolves true when nothing is failing any more.
+   */
+  async retryFailed(): Promise<boolean> {
+    const files = [...this.failedFiles];
+    if (files.length === 0) return true;
+    this.failedFiles.clear();
+    const resolveUrl = this.lastResolveUrl;
+    for (const f of files) {
+      this.retryCount.set(f, (this.retryCount.get(f) ?? 0) + 1);
+      if (!resolveUrl) continue;
+      try {
+        await Assets.unload(resolveUrl(f));
+      } catch {
+        /* not cached (or already unloaded): the new URL below still retries */
+      }
+    }
+    if (this.lastState && resolveUrl) await this.settleToState(this.lastState, resolveUrl);
+    return this.failedFiles.size === 0;
   }
 
   // ---------------------------------------------------------------- apply
@@ -270,6 +354,8 @@ export class PixiStage {
   ): Promise<void> {
     const instant = opts.instant ?? false;
     const speed = opts.speed ?? 1;
+    this.lastState = state;
+    this.lastResolveUrl = resolveUrl;
 
     for (const a of actions) {
       switch (a.kind) {
@@ -588,6 +674,8 @@ export class PixiStage {
 
   /** Force the display to match the target state exactly (skip/restore). */
   async settleToState(state: StageState, resolveUrl: (f: string) => string): Promise<void> {
+    this.lastState = state;
+    this.lastResolveUrl = resolveUrl;
     // background
     if (state.background?.file) {
       const tex = await this.texture(state.background.file, resolveUrl);

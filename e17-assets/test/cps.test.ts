@@ -172,3 +172,27 @@ describe.skipIf(!HAVE_GAME)("header-only CPS metadata (real archives)", () => {
     }
   });
 });
+
+describe.skipIf(!HAVE_GAME)("archive index recovery", () => {
+  it("retries an archive that was unavailable on the first lookup", async () => {
+    // A temporarily missing archive must not poison the index for the life of
+    // the process: the server's retry affordance depends on recovery here.
+    const { mkdtempSync, symlinkSync, rmSync, existsSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { AssetLibrary, ARCHIVES } = await import("../src/library.js");
+    const { GAME_DIR } = await import("./helpers.js");
+
+    const farm = mkdtempSync(join(tmpdir(), "e17lib-"));
+    for (const spec of ARCHIVES) {
+      if (spec.file === "bg.dat") continue; // deliberately absent at first
+      if (existsSync(join(GAME_DIR, spec.file))) symlinkSync(join(GAME_DIR, spec.file), join(farm, spec.file));
+    }
+    const lib = new AssetLibrary(farm);
+    expect(lib.resolve("bg01a1", "image")).toBeUndefined();
+
+    symlinkSync(join(GAME_DIR, "bg.dat"), join(farm, "bg.dat"));
+    expect(lib.resolve("bg01a1", "image")?.archive).toBe("bg.dat");
+    rmSync(farm, { recursive: true, force: true });
+  });
+});

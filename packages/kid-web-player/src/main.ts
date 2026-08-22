@@ -18,6 +18,7 @@ import { PixiStage } from "kid-renderer-pixi";
 import { loadConfig, saveConfig, type VnConfig } from "./config.js";
 import { ALL_SLOTS, AUTO_SLOT, QUICK_SLOT, SaveSlots, type SlotMeta } from "./slots.js";
 import { CompletionTracker, IdbCompletionStore } from "./completion.js";
+import { LoadingIndicator } from "./loading-indicator.js";
 import { matchEndings, type RouteGraphJson } from "kid-graph/model";
 
 declare global {
@@ -47,11 +48,33 @@ const btn = {
   quick: $("btn-quick"),
   routes: $("btn-routes"),
   cfg: $("btn-cfg"),
+  title: $("btn-title"),
 };
 const menuEl = $("menu");
 const menuTitleEl = menuEl.querySelector("#menu-title") as HTMLElement;
 const menuSlotsEl = menuEl.querySelector("#menu-slots") as HTMLElement;
 const settingsEl = $("settings");
+const confirmEl = $("confirm");
+const confirmTextEl = $("confirm-text");
+const loadingEl = $("loading");
+const loadingTextEl = $("loading-text");
+const errorEl = $("error");
+const errorTextEl = $("error-text");
+const titleMenu = {
+  newGame: $("t-new"),
+  cont: $<HTMLButtonElement>("t-continue"),
+  load: $("t-load"),
+  settings: $("t-settings"),
+  routes: $("t-routes"),
+};
+
+/**
+ * How long a first-use asset conversion may take before the player is told
+ * something is happening. Conversions of a full-screen background measure
+ * ~190 ms locally, so this sits just under that: cached assets never flash
+ * the indicator, and a genuinely slow one is never mistaken for a crash.
+ */
+const LOADING_INDICATOR_DELAY_MS = 120;
 
 /** Canvas size; replaced by the game profile's before the player boots. */
 let stageSize = { ...DEFAULT_GAME_PROFILE.canvas };
@@ -62,6 +85,26 @@ function fitStage(): void {
 }
 window.addEventListener("resize", fitStage);
 fitStage();
+
+/** In-page confirmation in the player's own visual language. */
+function confirmDialog(message: string): Promise<boolean> {
+  confirmTextEl.textContent = message;
+  confirmEl.classList.remove("hidden");
+  return new Promise((resolve) => {
+    const ok = confirmEl.querySelector("#confirm-ok")!;
+    const cancel = confirmEl.querySelector("#confirm-cancel")!;
+    const finish = (value: boolean) => (): void => {
+      confirmEl.classList.add("hidden");
+      ok.removeEventListener("click", yes);
+      cancel.removeEventListener("click", no);
+      resolve(value);
+    };
+    const yes = finish(true);
+    const no = finish(false);
+    ok.addEventListener("click", yes);
+    cancel.addEventListener("click", no);
+  });
+}
 
 function toast(msg: string): void {
   toastEl.textContent = msg;
@@ -166,6 +209,17 @@ class WebPlayer {
   private readonly audio = new AudioBox();
   private clickWaiter: (() => void) | null = null;
   private busy = false;
+  /** Debounced indicator, so cached assets never flash it. */
+  private readonly loading = new LoadingIndicator(
+    () => {
+      loadingTextEl.textContent = "converting artwork…";
+      loadingEl.classList.remove("hidden");
+    },
+    () => loadingEl.classList.add("hidden"),
+    LOADING_INDICATOR_DELAY_MS,
+  );
+  /** Assets whose conversion failed, shown in the error banner. */
+  private assetErrors = new Set<string>();
   private auto = false;
   private skip = false;
   private autoTimer: ReturnType<typeof setTimeout> | null = null;
@@ -192,7 +246,9 @@ class WebPlayer {
         backlogEl.classList.add("hidden");
         menuEl.classList.add("hidden");
         settingsEl.classList.add("hidden");
-      } else if (e.key === "Control") this.setSkip(true);
+        (confirmEl.querySelector("#confirm-cancel") as HTMLElement | null)?.click();
+      } else if (e.key === "t" || e.key === "T") void this.returnToTitle();
+      else if (e.key === "Control") this.setSkip(true);
     });
     document.addEventListener("keyup", (e) => {
       if (e.key === "Control") this.setSkip(false);
@@ -205,6 +261,14 @@ class WebPlayer {
     btn.quick.addEventListener("click", () => void this.saveToSlot(QUICK_SLOT));
     btn.routes.addEventListener("click", () => this.openRoutes());
     btn.cfg.addEventListener("click", () => this.openSettings());
+    btn.title.addEventListener("click", () => void this.returnToTitle());
+    titleMenu.newGame.addEventListener("click", () => void this.startNewGame());
+    titleMenu.cont.addEventListener("click", () => void this.continueGame());
+    titleMenu.load.addEventListener("click", () => this.openMenu("load"));
+    titleMenu.settings.addEventListener("click", () => this.openSettings());
+    titleMenu.routes.addEventListener("click", () => this.openRoutes());
+    errorEl.querySelector("#error-retry")!.addEventListener("click", () => void this.retryAssets());
+    errorEl.querySelector("#error-close")!.addEventListener("click", () => this.clearError());
     menuEl.querySelector("#menu-close")!.addEventListener("click", () => menuEl.classList.add("hidden"));
     settingsEl.querySelector("#settings-close")!.addEventListener("click", () => {
       settingsEl.classList.add("hidden");
@@ -263,6 +327,159 @@ class WebPlayer {
     bind("cfg-auto", "autoDelayFactor");
     bind("cfg-trans", "transitionSpeed");
     settingsEl.classList.remove("hidden");
+  }
+
+  // ------------------------------------------------ title flow
+  /** The save a "Continue" should resume: the most recently written slot. */
+  private latestSave(): SlotMeta | null {
+    const metas = this.slots.list();
+    if (metas.length === 0) return null;
+    return metas.reduce((newest, m) => (m.savedAt > newest.savedAt ? m : newest));
+  }
+
+  /** Show the title screen, reflecting whether there is anything to continue. */
+  private showTitle(): void {
+    const latest = this.latestSave();
+    if (latest) {
+      titleMenu.cont.classList.remove("hidden");
+      titleMenu.cont.textContent = `CONTINUE · ${latest.scene} · line ${latest.lines}`;
+    } else {
+      titleMenu.cont.classList.add("hidden");
+    }
+    titleEl.classList.remove("hidden");
+    hudEl.textContent = "";
+    speakerEl.textContent = "";
+    textEl.textContent = "";
+  }
+
+  /** Tear the current session down; the caller decides what happens next. */
+  private endSession(): void {
+    this.cancelAuto();
+    this.audio.stopAll();
+    this.session = null;
+    this.skip = false;
+    btn.skip.classList.remove("on");
+    this.auto = false;
+    btn.auto.classList.remove("on");
+    // wake anything the loop is parked on so it can observe the change
+    const wakeClick = this.clickWaiter;
+    const wakeChoice = this.choiceResolve;
+    this.clickWaiter = null;
+    this.choiceResolve = null;
+    wakeClick?.();
+    wakeChoice?.(-1);
+    choicesEl.classList.add("hidden");
+    backlogEl.classList.add("hidden");
+    menuEl.classList.add("hidden");
+    settingsEl.classList.add("hidden");
+    movieEl.classList.add("hidden");
+    movieEl.pause();
+  }
+
+  /** Leave the story and go back to the title screen. */
+  private async returnToTitle(): Promise<void> {
+    if (!this.session) return;
+    const ended = this.session.done;
+    if (
+      !ended &&
+      !(await confirmDialog("Return to the title screen?\n\nProgress since your last save is lost."))
+    ) {
+      return;
+    }
+    await this.tracker?.flush();
+    this.endSession();
+    this.stage?.reset();
+    this.showTitle();
+  }
+
+  /**
+   * Start a fresh game. Existing saves are never written or cleared here -
+   * only the autosave slot is reused later, as the player crosses scenes, so
+   * that is what the confirmation warns about.
+   */
+  private async startNewGame(): Promise<void> {
+    const hasAutosave = this.slots.peek(AUTO_SLOT) !== null;
+    if (
+      hasAutosave &&
+      !(await confirmDialog(
+        "Start a new game?\n\nYour manual slots and quicksave are kept.\n" +
+          "The autosave slot will be replaced as you play.",
+      ))
+    ) {
+      return;
+    }
+    this.endSession();
+    this.stage?.reset();
+    titleEl.classList.add("hidden");
+    const params = new URLSearchParams(location.search);
+    const start = params.get("start") ?? this.meta.startScene;
+    try {
+      this.session = await GameSession.start(this.source, start, this.sessionOptions());
+    } catch (err) {
+      this.showError(`could not start a new game: ${(err as Error).message}`);
+      this.showTitle();
+      return;
+    }
+    this.moviesSinceChoice = [];
+    this.moviesPlayed = new Set();
+    void this.loop();
+  }
+
+  /** Resume the most recently written save. */
+  private async continueGame(): Promise<void> {
+    const latest = this.latestSave();
+    if (!latest) {
+      toast("no save to continue");
+      return;
+    }
+    await this.loadFromSlot(latest.slot);
+  }
+
+  // ------------------------------------------------ loading + errors
+  private showError(message: string, retryable = false): void {
+    errorTextEl.textContent = message;
+    (errorEl.querySelector("#error-retry") as HTMLElement).classList.toggle("hidden", !retryable);
+    errorEl.classList.remove("hidden");
+  }
+
+  private clearError(): void {
+    errorEl.classList.add("hidden");
+    this.assetErrors.clear();
+  }
+
+  /** An asset failed to load: name it, with the server's reason when it gave one. */
+  private noteAssetError(file: string): void {
+    const first = this.assetErrors.size === 0;
+    this.assetErrors.add(file);
+    const names = [...this.assetErrors];
+    const summary =
+      names.length === 1
+        ? `could not load ${names[0]}`
+        : `could not load ${names[0]} and ${names.length - 1} more file(s)`;
+    this.showError(summary, true);
+    if (!first) return;
+    // the local server answers a failed conversion with a readable reason
+    void fetch(`${this.assetsBase}/${file}`)
+      .then(async (res) => (res.ok ? null : (await res.text()).split("\n")[0] ?? null))
+      .then((detail) => {
+        if (detail && !errorEl.classList.contains("hidden")) {
+          errorTextEl.textContent = `${summary}\n${detail}`;
+        }
+      })
+      .catch(() => {});
+  }
+
+  /** Retry every failed asset and rebuild the picture. */
+  private async retryAssets(): Promise<void> {
+    errorTextEl.textContent = "retrying…";
+    const ok = await this.stage?.retryFailed();
+    if (ok) {
+      this.clearError();
+      toast("assets reloaded");
+    } else {
+      this.assetErrors = new Set(this.stage?.failed ?? []);
+      this.showError(`still failing: ${[...this.assetErrors].join(", ")}`, true);
+    }
   }
 
   // ------------------------------------------------ save menu
@@ -571,7 +788,8 @@ class WebPlayer {
         // sessionEnd
         this.audio.stopAll();
         speakerEl.textContent = "";
-        textEl.textContent = ev.reason === "ending" ? "— FIN —" : `— ${ev.reason} —`;
+        textEl.textContent =
+          (ev.reason === "ending" ? "— FIN —" : `— ${ev.reason} —`) + "\n\nTITLE (T) returns to the title screen.";
         hudEl.textContent += " · ended";
         if (ev.reason === "ending" && this.tracker) {
           await this.recordEnding(session, ev.scene);
@@ -613,21 +831,20 @@ class WebPlayer {
   }
 
   async boot(): Promise<void> {
-    const manifest = (await (await fetch(`${this.assetsBase}/manifest.json`)).json()) as AssetManifest;
+    const res = await fetch(`${this.assetsBase}/manifest.json`);
+    if (!res.ok) {
+      throw new Error(`asset manifest unavailable (HTTP ${res.status}) - is the local server still running?`);
+    }
+    const manifest = (await res.json()) as AssetManifest;
     this.assets = new WebAssets(manifest);
     this.source = new WebSceneSource(this.assets);
     this.stage = await PixiStage.create(pixiParent, this.meta.profile);
+    this.stage.onAssetActivity = (pending) => this.loading.update(pending);
+    this.stage.onAssetError = (file) => this.noteAssetError(file);
     this.tracker = await CompletionTracker.open(new IdbCompletionStore(this.ns)).catch(() => null);
-    const params = new URLSearchParams(location.search);
-    const start = params.get("start") ?? this.meta.startScene;
-    await new Promise<void>((resolve) => {
-      titleEl.addEventListener("click", () => {
-        titleEl.classList.add("hidden");
-        resolve();
-      });
-    });
-    this.session = await GameSession.start(this.source, start, this.sessionOptions());
-    await this.loop();
+    // The title screen drives everything from here: New Game, Continue,
+    // Load, Settings and the route map.
+    this.showTitle();
   }
 }
 
@@ -637,9 +854,25 @@ if ("serviceWorker" in navigator) {
 
 /** Load the game package metadata, then boot the player against it. */
 async function bootPlayer(): Promise<void> {
-  const meta = (await (await fetch("game.json")).json()) as GamePackageMeta;
+  const res = await fetch("game.json");
+  if (!res.ok) {
+    throw new Error(`game package metadata unavailable (HTTP ${res.status})`);
+  }
+  const meta = (await res.json()) as GamePackageMeta;
   stageSize = { ...meta.profile.canvas };
   fitStage();
   await new WebPlayer("assets", meta).boot();
 }
-void bootPlayer();
+
+void bootPlayer().catch((err: unknown) => {
+  // Nothing is playable without the package; say so where the player looks.
+  const message = err instanceof Error ? err.message : String(err);
+  const errorBox = document.getElementById("error")!;
+  const errorText = document.getElementById("error-text")!;
+  errorText.textContent =
+    `${message}\n\nRe-run: npm run ever17 -- serve --game-dir "<your Ever17 folder>"`;
+  (errorBox.querySelector("#error-retry") as HTMLElement).textContent = "reload";
+  errorBox.querySelector("#error-retry")!.addEventListener("click", () => location.reload());
+  errorBox.classList.remove("hidden");
+  document.getElementById("titlehint")!.textContent = "could not load the game package";
+});

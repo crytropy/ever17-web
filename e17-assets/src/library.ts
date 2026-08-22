@@ -72,11 +72,18 @@ export class AssetLibrary {
     return a;
   }
 
+  /**
+   * Index one archive's entries, once. An archive that is absent or unreadable
+   * is deliberately NOT marked as indexed: a later call retries it, so an
+   * installation that was briefly unavailable (an unmounted volume, a file
+   * being replaced) recovers without restarting the process.
+   */
   private ensureIndexed(spec: (typeof ARCHIVES)[number]): void {
     if (this.indexed.has(spec.file)) return;
-    this.indexed.add(spec.file);
     if (!existsSync(join(this.gameDir, spec.file))) return;
-    for (const entry of this.archive(spec.file).entries) {
+    const archive = this.archive(spec.file); // throws: stays unindexed, retried
+    this.indexed.add(spec.file);
+    for (const entry of archive.entries) {
       const base = entry.name.toLowerCase().replace(/\.[^.]+$/, "");
       const key = `${spec.kind}:${base}`;
       const resolved: ResolvedAsset = {
