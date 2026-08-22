@@ -20,5 +20,3 @@ export type {
   SessionEndEvent,
 } from "./game-session.js";
 export type { VmSaveState } from "./vm.js";
-export { buildRouteGraph, standardTraversals, toDot } from "./graph.js";
-export type { RouteGraph, RouteNode, RouteEdge } from "./graph.js";

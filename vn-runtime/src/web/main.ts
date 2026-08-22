@@ -15,6 +15,8 @@ import type { AssetIndex, AssetManifest, ManifestEntry } from "../types.js";
 import { PixiStage } from "./stage.js";
 import { DEFAULT_CONFIG, loadConfig, saveConfig, type VnConfig } from "./config.js";
 import { ALL_SLOTS, AUTO_SLOT, QUICK_SLOT, SaveSlots, type SlotMeta } from "./slots.js";
+import { CompletionTracker, IdbCompletionStore } from "./completion.js";
+import { matchEndings, type RouteGraphJson } from "vn-graph/model";
 
 declare global {
   interface Window {
@@ -41,6 +43,7 @@ const btn = {
   save: $("btn-save"),
   load: $("btn-load"),
   quick: $("btn-quick"),
+  routes: $("btn-routes"),
   cfg: $("btn-cfg"),
 };
 const menuEl = $("menu");
@@ -145,6 +148,13 @@ class WebPlayer {
   private stage: PixiStage | null = null;
   private slots = new SaveSlots(localStorage);
   private config: VnConfig = loadConfig(localStorage);
+  /** Completion tracking (scenes/choices/endings/assets), separate from saves. */
+  private tracker: CompletionTracker | null = null;
+  /** Movies played since the last choice - identifies the ending reached. */
+  private moviesSinceChoice: string[] = [];
+  /** Every movie played this session - evidence for graph ending matching. */
+  private moviesPlayed = new Set<string>();
+  private graphJson: Promise<RouteGraphJson | null> | null = null;
   private source!: WebSceneSource;
   private assets!: WebAssets;
   private readonly audio = new AudioBox();
@@ -164,6 +174,7 @@ class WebPlayer {
       else if (e.key === "s" || e.key === "S") this.openMenu("save");
       else if (e.key === "d" || e.key === "D") this.openMenu("load");
       else if (e.key === "q" || e.key === "Q") void this.saveToSlot(QUICK_SLOT);
+      else if (e.key === "r" || e.key === "R") this.openRoutes();
       else if (e.key === "o" || e.key === "O") this.openSettings();
       else if (e.key === "Escape") {
         backlogEl.classList.add("hidden");
@@ -180,6 +191,7 @@ class WebPlayer {
     btn.save.addEventListener("click", () => this.openMenu("save"));
     btn.load.addEventListener("click", () => this.openMenu("load"));
     btn.quick.addEventListener("click", () => void this.saveToSlot(QUICK_SLOT));
+    btn.routes.addEventListener("click", () => this.openRoutes());
     btn.cfg.addEventListener("click", () => this.openSettings());
     menuEl.querySelector("#menu-close")!.addEventListener("click", () => menuEl.classList.add("hidden"));
     settingsEl.querySelector("#settings-close")!.addEventListener("click", () => {
@@ -195,6 +207,28 @@ class WebPlayer {
       voice: this.config.voiceVolume,
     };
     this.audio.applyVolumes();
+  }
+
+  private openRoutes(): void {
+    void this.tracker?.flush().then(() => window.open("routes", "_blank"));
+  }
+
+  /** Award endings by the graph's own definitions (scene + dispatch
+   * conditions on the final variables + movie evidence); fall back to the
+   * movie/scene name when the graph is unavailable. */
+  private async recordEnding(session: GameSession, endScene: string): Promise<void> {
+    this.graphJson ??= fetch("graph.json")
+      .then((r) => (r.ok ? (r.json() as Promise<RouteGraphJson>) : null))
+      .catch(() => null);
+    const graph = await this.graphJson;
+    const matched = graph
+      ? matchEndings(graph.endings, endScene, session.vars, this.moviesPlayed)
+      : [];
+    if (matched.length > 0) {
+      for (const e of matched) this.tracker?.ending(e.id);
+    } else {
+      this.tracker?.ending(this.moviesSinceChoice[0] ?? endScene);
+    }
   }
 
   // ------------------------------------------------ settings
@@ -268,12 +302,31 @@ class WebPlayer {
     menuEl.classList.add("hidden");
     titleEl.classList.add("hidden");
     try {
-      this.session = await GameSession.restore(this.source, save);
+      this.session = await GameSession.restore(this.source, save, this.sessionOptions());
+      this.moviesSinceChoice = [];
+      this.moviesPlayed = new Set();
       toast(`loaded: ${save.vm.scene} · line ${save.counters.lines}`);
       void this.loop();
     } catch (err) {
       toast(`load failed: ${(err as Error).message}`);
     }
+  }
+
+  /** Shared by New Game and save restore - keeps hooks identical. */
+  private sessionOptions(): Parameters<typeof GameSession.start>[2] {
+    return {
+      onSceneChange: (scene, index) => {
+        this.tracker?.scene(scene);
+        // autosave at every scene boundary after the first
+        if (index > 1) setTimeout(() => void this.saveToSlot(AUTO_SLOT), 50);
+      },
+      vm: {
+        onOp: (op) => {
+          if (op.op === "playSE") this.pendingOps.push({ op: "playSE", asset: op.asset, arg1: op.arg1 });
+          else if (op.op === "playMovie") this.pendingOps.push({ op: "playMovie", asset: op.asset });
+        },
+      },
+    };
   }
 
   private openMenu(mode: "save" | "load"): void {
@@ -425,8 +478,24 @@ class WebPlayer {
           );
         }
       } else if (op.op === "playMovie" && op.asset) {
+        this.moviesSinceChoice.push(op.asset.toLowerCase());
+        this.moviesPlayed.add(op.asset.toLowerCase());
         await this.playMovie(op.asset);
       }
+      if (op.asset) this.tracker?.asset(op.asset);
+    }
+  }
+
+  /** Record what this event puts on screen into the completion state. */
+  private trackEvent(ev: Extract<SessionEvent, { type: "dialogue" | "choice" }>): void {
+    const t = this.tracker;
+    if (!t) return;
+    t.asset(ev.state.background?.asset);
+    t.asset(ev.state.bgm);
+    for (const s of ev.state.sprites) t.asset(s.asset);
+    if (ev.type === "dialogue") t.asset(ev.voice);
+    for (const a of ev.actions) {
+      if (a.kind === "cgEffect") t.asset(a.asset);
     }
   }
 
@@ -440,6 +509,7 @@ class WebPlayer {
         const ev: SessionEvent = await session.next();
         await this.flushOps();
         if (ev.type === "dialogue") {
+          this.trackEvent(ev);
           this.audio.setBgm(
             ev.state.bgm,
             ev.state.bgm ? `${this.assetsBase}/${this.assets.relative(ev.state.bgm) ?? ""}` : null,
@@ -462,6 +532,7 @@ class WebPlayer {
         }
         if (ev.type === "choice") {
           this.cancelAuto();
+          this.trackEvent(ev);
           await this.stage?.apply(ev.state, ev.actions, (f) => `${this.assetsBase}/${f}`, {
             instant: this.skip,
           });
@@ -469,6 +540,8 @@ class WebPlayer {
           this.hud();
           const option = await this.showChoice(ev);
           if (this.session !== session) return;
+          this.tracker?.choice(session.scene, ev.id ?? `b${ev.state.block}`, option);
+          this.moviesSinceChoice = [];
           session.choose(option);
           continue;
         }
@@ -477,6 +550,10 @@ class WebPlayer {
         speakerEl.textContent = "";
         textEl.textContent = ev.reason === "ending" ? "— FIN —" : `— ${ev.reason} —`;
         hudEl.textContent += " · ended";
+        if (ev.reason === "ending" && this.tracker) {
+          await this.recordEnding(session, ev.scene);
+          await this.tracker.flush();
+        }
         return;
       }
     } finally {
@@ -510,6 +587,7 @@ class WebPlayer {
     this.assets = new WebAssets(manifest);
     this.source = new WebSceneSource(this.assets);
     this.stage = await PixiStage.create(pixiParent);
+    this.tracker = await CompletionTracker.open(new IdbCompletionStore()).catch(() => null);
     const params = new URLSearchParams(location.search);
     const start = params.get("start") ?? "op00";
     await new Promise<void>((resolve) => {
@@ -518,18 +596,7 @@ class WebPlayer {
         resolve();
       });
     });
-    this.session = await GameSession.start(this.source, start, {
-      onSceneChange: (_scene, index) => {
-        // autosave at every scene boundary after the first
-        if (index > 1) setTimeout(() => void this.saveToSlot(AUTO_SLOT), 50);
-      },
-      vm: {
-        onOp: (op) => {
-          if (op.op === "playSE") this.pendingOps.push({ op: "playSE", asset: op.asset, arg1: op.arg1 });
-          else if (op.op === "playMovie") this.pendingOps.push({ op: "playMovie", asset: op.asset });
-        },
-      },
-    });
+    this.session = await GameSession.start(this.source, start, this.sessionOptions());
     await this.loop();
   }
 }

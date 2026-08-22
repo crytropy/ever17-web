@@ -25,6 +25,8 @@ export interface ServeOptions {
   fixturesPath?: string;
   /** Where the harness's POSTed PNGs are written. */
   shotsOutDir?: string;
+  /** Exploration data for /routes (default: build/exploration.json if present). */
+  explorationPath?: string;
 }
 
 /**
@@ -52,7 +54,16 @@ export function serve(opts: ServeOptions): void {
     target: "es2022",
     logLevel: "warning",
   });
-  console.log(`bundled web client + shots harness -> ${webDir}`);
+  buildSync({
+    entryPoints: [join(webSrc, "routes.ts")],
+    bundle: true,
+    outfile: join(webDir, "routes-bundle.js"),
+    format: "iife",
+    target: "es2022",
+    sourcemap: "inline",
+    logLevel: "warning",
+  });
+  console.log(`bundled web client + shots harness + route explorer -> ${webDir}`);
 
   const roots: Record<string, string> = {
     "/ir": resolve(opts.irDir),
@@ -61,9 +72,57 @@ export function serve(opts: ServeOptions): void {
 
   const fixturesPath = opts.fixturesPath ?? resolve("vn-runtime", "test", "__shots__", "fixtures.json");
   const shotsOutDir = opts.shotsOutDir ?? resolve("build", "shots", "current");
+  const explorationPath = opts.explorationPath ?? resolve("build", "exploration.json");
+
+  // Route graph for /routes: built once from the IR on first request (the
+  // graph logic lives in vn-graph; this server only serializes it).
+  let graphJson: string | null = null;
+  const buildGraph = async (): Promise<string> => {
+    if (graphJson) return graphJson;
+    const { buildGraphModel, applyExploration, toJson } = await import("vn-graph");
+    const { readdirSync } = await import("node:fs");
+    const { fsSceneSource } = await import("./scene-source.js");
+    const source = fsSceneSource(opts.irDir);
+    const scenes = new Map<string, import("./types.js").IrScene>();
+    for (const f of readdirSync(opts.irDir).filter((f) => f.endsWith(".json")).sort()) {
+      const s = source.load(f.replace(/\.json$/, ""));
+      if (s) scenes.set(s.scene.toLowerCase(), s);
+    }
+    const model = buildGraphModel(scenes, "op00");
+    if (existsSync(explorationPath)) {
+      applyExploration(model, JSON.parse(readFileSync(explorationPath, "utf8")));
+    }
+    graphJson = JSON.stringify(toJson(model));
+    return graphJson;
+  };
 
   const server = createServer((req, res) => {
     const url = (req.url ?? "/").split("?")[0]!;
+
+    // ------------- route explorer endpoints
+    if (url === "/graph.json") {
+      buildGraph().then(
+        (json) => {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(json);
+        },
+        (err: Error) => {
+          res.writeHead(500, { "content-type": "text/plain" });
+          res.end(`graph build failed: ${err.message}`);
+        },
+      );
+      return;
+    }
+    if (url === "/exploration.json") {
+      if (!existsSync(explorationPath)) {
+        res.writeHead(404, { "content-type": "text/plain" });
+        res.end(`no exploration data - run: vn explore ${opts.irDir} -o ${explorationPath}`);
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(readFileSync(explorationPath));
+      return;
+    }
 
     // ------------- visual-regression harness endpoints
     if (url === "/shots/fixtures.json") {
@@ -104,7 +163,7 @@ export function serve(opts: ServeOptions): void {
       }
     }
     if (!filePath) {
-      const rel = url === "/" ? "index.html" : normalize(url.slice(1));
+      const rel = url === "/" ? "index.html" : url === "/routes" ? "routes.html" : normalize(url.slice(1));
       if (!rel.startsWith("..")) filePath = join(webDir, rel);
     }
     if (!filePath || !existsSync(filePath) || !statSync(filePath).isFile()) {

@@ -1,0 +1,16 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": [],
+    "noEmit": true
+  },
+  "include": [
+    "src/viewer.ts",
+    "src/standalone.ts",
+    "src/layout.ts",
+    "src/model.ts",
+    "src/explain.ts",
+    "src/exploration-types.ts"
+  ]
+}

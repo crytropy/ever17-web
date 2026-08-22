@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ever17 route explorer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#000814">
+<style>
+  html, body { margin:0; height:100%; background:#070b16; color:#dbe4ff;
+               font-family:system-ui, sans-serif; overflow:hidden; }
+  #top { position:fixed; left:0; right:0; top:0; height:56px; z-index:5;
+         display:flex; align-items:center; gap:22px; padding:0 16px;
+         background:rgba(7,11,22,.92); border-bottom:1px solid #1c2946; }
+  #top h1 { font-size:15px; margin:0; color:#9fc3ff; letter-spacing:.15em; }
+  #top a { color:#8093b8; font-size:12px; text-decoration:none; border:1px solid #2c3a5c;
+           border-radius:4px; padding:3px 10px; }
+  .stat { font:12px monospace; color:#8093b8; }
+  .stat b { color:#cfe0ff; font-size:14px; }
+  .stat .pct { color:#4ade80; }
+  #legend { margin-left:auto; display:flex; gap:14px; font:11px monospace; color:#8093b8; }
+  #legend span::before { content:"—"; font-weight:bold; margin-right:4px; }
+  #legend .lin::before { color:#64748b; } #legend .cho::before { color:#3b82f6; }
+  #legend .con::before { color:#d97706; } #legend .end::before { color:#dc2626; }
+  #app { position:fixed; inset:56px 0 0 0; }
+  #panel { position:fixed; right:12px; bottom:12px; top:68px; width:360px; z-index:6;
+           background:rgba(10,16,34,.96); border:1px solid #2c3a5c; border-radius:8px;
+           padding:14px 16px; overflow-y:auto; font-size:13px; }
+  #panel h2 { margin:0 0 6px; font:16px monospace; color:#9fc3ff; }
+  #panel h3 { margin:12px 0 4px; font-size:12px; color:#8093b8; text-transform:uppercase; }
+  #panel .kv { margin:2px 0; color:#c6d2f0; }
+  #panel .muted { color:#68729a; }
+  #panel .opt { margin:1px 0 1px 10px; color:#9aa8cc; }
+  #panel .opt.done { color:#4ade80; }
+  #panel .edge { margin:2px 0; }
+  #panel .edge.ending { color:#f87171; } #panel .edge.choice { color:#93c5fd; }
+  #panel .edge.conditional { color:#fbbf24; } #panel .edge.linear { color:#94a3b8; }
+  #panel pre { background:#0a1024; border:1px solid #1c2946; border-radius:5px;
+               padding:8px; font-size:11px; white-space:pre-wrap; color:#b7c4e6; }
+  #endings-list { position:fixed; left:12px; bottom:12px; z-index:6; font:12px monospace;
+                  background:rgba(10,16,34,.92); border:1px solid #2c3a5c; border-radius:8px;
+                  padding:10px 14px; }
+  #endings-list .e { margin:2px 0; color:#68729a; }
+  #endings-list .e.got { color:#4ade80; }
+  .hidden { display:none !important; }
+</style>
+</head>
+<body>
+<div id="top">
+  <h1>ROUTE EXPLORER</h1>
+  <a href="/">← game</a>
+  <div class="stat" id="st-scenes"></div>
+  <div class="stat" id="st-choices"></div>
+  <div class="stat" id="st-endings"></div>
+  <div class="stat" id="st-assets"></div>
+  <div id="legend"><span class="lin">linear</span><span class="cho">choice</span><span class="con">conditional</span><span class="end">ending</span></div>
+</div>
+<div id="app"></div>
+<div id="endings-list"></div>
+<div id="panel" class="hidden"></div>
+<script src="routes-bundle.js"></script>
+</body>
+</html>

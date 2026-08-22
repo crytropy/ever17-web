@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./cps": "./src/cps/index.ts",
-    "./waf": "./src/waf/index.ts"
+    "./waf": "./src/waf/index.ts",
+    "./scene-assets": "./src/scene-assets.ts"
   },
   "bin": { "e17-assets": "./src/cli.ts" },
   "scripts": { "typecheck": "tsc --noEmit" },

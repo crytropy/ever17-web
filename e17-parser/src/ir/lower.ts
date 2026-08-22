@@ -26,7 +26,19 @@ function operandU16(op: Operand | undefined): number | null {
 
 function exprToValue(e: RawExpr): IrValue {
   const v = exprImm(e);
-  return v !== undefined ? { type: "const", value: v } : { type: "expr", raw: formatExpr(e) };
+  if (v !== undefined) return { type: "const", value: v };
+  // `28 0a <var> 14`: read another variable (route-clear flags summed in y_ed)
+  const t = e.tokens;
+  if (
+    t.length === 4 &&
+    t[0]!.kind === "op" && t[0]!.op === 0x28 &&
+    t[1]!.kind === "op" && t[1]!.op === 0x0a &&
+    t[2]!.kind === "imm" &&
+    t[3]!.kind === "op" && t[3]!.op === 0x14
+  ) {
+    return { type: "varRef", varId: t[2]!.value };
+  }
+  return { type: "expr", raw: formatExpr(e) };
 }
 
 /**

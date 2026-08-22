@@ -421,9 +421,12 @@ export class SceneVm {
         }
 
         case "varSet": {
-          const value = op.value.type === "const" ? op.value.value : null;
+          const value =
+            op.value.type === "const" ? op.value.value
+            : op.value.type === "varRef" ? (this.vars.get(op.value.varId) ?? 0)
+            : null;
           if (value === null) {
-            // non-constant writes have not been observed in story scripts
+            // unrecognized value expressions are surfaced, not guessed
             this.opts.onOp?.(op, this.block);
             break;
           }

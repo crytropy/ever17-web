@@ -155,13 +155,14 @@ letterboxes into any viewport (`flex:none` keeps the 800×600 layout box;
 a transform scales it), touch taps advance, and safe-area insets are
 respected.
 
-**Route graph** (`src/graph.ts`, `vn graph <irDir> -o graph.json [--dot g.dot]`).
-Static analysis walks every scene's IR for `gotoScene` edges and annotates
-each with the `varSet` writes on the path to it (route flags, the 1223 ending
-id, the 1203 transfer register); dynamic traversal then replays the four
-standard choice policies headlessly and marks which edges real playthroughs
-observe. Output: 104 scenes, 236 static transitions (54 observed), terminal
-and unreferenced scenes, and an optional Graphviz DOT rendering.
+**Route graph and exploration** now live in the dedicated
+[`vn-graph`](../vn-graph/) package (`vn graph`, `vn explore`, `vn endings`,
+`vn explain-ending`); the client's `/routes` page consumes its JSON. The
+browser client records **completion** persistently (IndexedDB, separate
+from saves — loading an old save never rewinds it): visited scenes, chosen
+options, collected endings and discovered assets, shown on `/routes` as an
+interactive dimmed/highlighted route map with per-scene detail and
+trace-generated ending explanations.
 
 ## Status
 

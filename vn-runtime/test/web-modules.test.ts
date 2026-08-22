@@ -124,3 +124,73 @@ describe("save slots", () => {
     expect(slots.get("3")).toBeNull();
   });
 });
+
+describe("completion tracking", async () => {
+  const { CompletionTracker, MemoryCompletionStore } = await import("../src/web/completion.js");
+
+  it("records progress and persists it through the store", async () => {
+    const store = new MemoryCompletionStore();
+    const t = await CompletionTracker.open(store);
+    t.scene("OP00");
+    t.choice("op00", 7, 1);
+    t.ending("end_tu00");
+    t.asset("BG_M_I");
+    await t.flush();
+
+    const reopened = await CompletionTracker.open(store);
+    expect([...reopened.scenes]).toEqual(["op00"]);
+    expect([...reopened.choices]).toEqual(["op00:7:1"]);
+    expect([...reopened.endings]).toEqual(["END_TU00"]);
+    expect([...reopened.assets]).toEqual(["bg_m_i"]);
+  });
+
+  it("replaying the same route does not duplicate progress", async () => {
+    const store = new MemoryCompletionStore();
+    const t = await CompletionTracker.open(store);
+    const playRoute = (): void => {
+      for (const s of ["op00", "t_1a", "t_1b"]) t.scene(s);
+      t.choice("op00", 7, 0);
+      t.ending("SYBD");
+      t.asset("bg01a");
+    };
+    playRoute();
+    await t.flush();
+    const first = t.snapshot();
+    playRoute();
+    playRoute();
+    await t.flush();
+    expect(t.snapshot()).toEqual(first);
+    expect(t.scenes.size).toBe(3);
+    expect(t.choices.size).toBe(1);
+  });
+
+  it("progress accumulates across separate sessions (set union)", async () => {
+    const store = new MemoryCompletionStore();
+    const a = await CompletionTracker.open(store);
+    a.scene("op00");
+    a.ending("END_TU00");
+    await a.flush();
+    const b = await CompletionTracker.open(store);
+    b.scene("s_1a");
+    b.ending("END_SA00");
+    await b.flush();
+    const c = await CompletionTracker.open(store);
+    expect([...c.scenes].sort()).toEqual(["op00", "s_1a"]);
+    expect([...c.endings].sort()).toEqual(["END_SA00", "END_TU00"]);
+  });
+
+  it("gameplay saves and completion are separate stores", async () => {
+    // loading an old save must never rewind completion: the tracker never
+    // reads or writes save slots, and SaveSlots never touches completion
+    const store = new MemoryCompletionStore();
+    const t = await CompletionTracker.open(store);
+    t.scene("t_6b");
+    t.ending("END_TU00");
+    await t.flush();
+    const slots = new SaveSlots(mockStorage());
+    expect(slots.list()).toEqual([]);
+    const after = await store.load();
+    expect(after?.visitedScenes).toEqual(["t_6b"]);
+    expect(after?.endings).toEqual(["END_TU00"]);
+  });
+});

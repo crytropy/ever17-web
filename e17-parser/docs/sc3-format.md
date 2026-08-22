@@ -306,6 +306,69 @@ Variables persist across `GOTO_SCRIPT` (one global table); scene transitions
 conventionally write `1203 := 0` ("fresh entry") before jumping, and callers
 of shared scenes leave a nonzero resume index instead.
 
+### 6.2 Variable-valued writes (`28 0a <var> 14` as an rvalue) — phase 5B
+
+The value operand of `fe 28` is usually a constant expression, but y_ed's
+coda uses the four-token expression `28 0a <var> 0x14` as the **value**: read
+another variable. Observed only in one construct (below), lowered to a
+first-class `varRef` IR value and executed by the runtime as a read of the
+global table. Confidence: High for this shape-in-context; other rvalue
+expression forms remain unlowered and are surfaced as explicit unknowns.
+
+### 6.3 Cross-playthrough flags and the final-route unlock — phase 5B
+
+Route completion is tracked in an assign-once flag family that the scripts
+never reset — state that only makes sense if it **persists across
+playthroughs** (the PC engine's system data). Evidence: each flag's write
+site can never reach its read sites within a single run (the ending scene
+writes what the early chapters read), and the title-screen script (startup)
+presets these same vars for its chapter-select entries.
+
+| var | written by | read by | meaning (inferred) |
+|---|---|---|---|
+| 1039 | tt7a `:=1` | tl6a `==0`, y_ed | Tsugumi finale cleared |
+| 1040 | tl7a `:=1`, y_ed | y_ed | Sora finale cleared |
+| 1043 | y_ed (sy7a ending region) | y_ed | You finale cleared |
+| 1046 | y_ed (ss7a ending region) | y_ed | Sara finale cleared |
+| 1050 | y_ed `:=1` (unlock block) | s_1a2/t_1b `==0` skip, y_ed `==1` | final chapter unlocked |
+| 1265 | s_1a2/t_1b `:=1` | the other side's chapters, y_ed | first-chapter variant seen |
+| 1049 | ycep `:=1` | y_ed `!=0` | final-route epilogue cleared |
+
+**The unlock computation** (y_ed, coda path `1203 == 1`, block 0x1125 area):
+
+```
+1215 := 0
+1215 += var1039      ; the only varRef writes in the story scripts
+1215 += var1043
+1215 += var1046
+1215 += var1040
+if 1215 != 4 -> skip
+1050 := 1            ; dialogue: 『第3只眼』开眼……最终章：可可篇发现
+1060 := 1
+```
+
+All four route finales, then, unlock the final chapter. With `1050` set, the
+second-playthrough calls into the fragment scenes stop being skipped
+(`t_1b`/`s_1a2` guard them with `1050 == 0`); each fragment scene (`sc1a`,
+`sc1b`, `sc1c`, `sc1d`, `sc2b`, `sc2d` on the Kid side; `tc1a`, `tc1d`,
+`tc2a` on Takeshi's) increments the counter **1210**, and `s_2d` opens the
+final route at `1210 == 6` (sc2f → yc3a…ycep). The ending register rows for
+the base game, recovered from the route-committing writes:
+
+| 1223 | committed by | ending |
+|---|---|---|
+| 0 | tt7a | Tsugumi good (END_TU00) |
+| 1 | tl7a | Sora good (END_SO00) |
+| 2 | sy7a | You good (END_YU00) |
+| 3 | ss7a | Sara good (END_SA00) |
+| 4 | t_bd | Takeshi-side bad |
+| 5 | sybd | You bad |
+| 6 | ssbd | Sara bad |
+
+Confidence: High for the mechanism (every element is directly in the
+bytecode and reproduced by multi-playthrough execution); the per-flag
+*naming* is inferred from the committing scenes (Medium).
+
 ## 7. Confirmed worked examples
 
 * **debug_bg8**: 240 × (`SET_BG bg…`, `SET_SPRITE YU02BDM`, `MESSAGE`) then

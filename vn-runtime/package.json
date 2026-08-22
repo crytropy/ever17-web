@@ -16,6 +16,7 @@
   "dependencies": {
     "e17-assets": "*",
     "e17-parser": "*",
-    "pixi.js": "^8.20.0"
+    "pixi.js": "^8.20.0",
+    "vn-graph": "*"
   }
 }

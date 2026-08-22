@@ -23,6 +23,9 @@ export type IrCondition =
 
 export type IrValue =
   | { type: "const"; value: number }
+  /** `28 0a <var> 14`: the value of another variable (y_ed sums the four
+   * route-clear flags into var 1215 this way). */
+  | { type: "varRef"; varId: number }
   | { type: "expr"; raw: string };
 
 export interface DialogueLine {

@@ -23,8 +23,13 @@ usage:
                                                     regression harness)
   vn fixtures <irDir> <manifest.json> -o <out.json> capture representative presentation
                                                     fixtures from a headless playthrough
-  vn graph <irDir> -o <out.json> [--dot out.dot]    generate the scene route graph
-                                                    (static edges + dynamic coverage)
+  vn graph <irDir> -o <out> [--format json|dot|html] generate the route graph (static
+                                                    edges + classification + coverage;
+                                                    html = standalone interactive viewer)
+  vn endings <irDir> [--exploration <file>]         list detected endings (static + observed)
+  vn explore <irDir> [-o <out.json>]                explore every reachable branch via
+                                                    save/restore; find endings + coverage
+  vn explain-ending <irDir> <endingId>              why an ending happens, from traces
 
 options:
   --choice <id>=<option>   answer the choice with that id (repeatable)
@@ -39,7 +44,14 @@ options:
 }
 
 const argv = process.argv.slice(2);
-const flags = new Map<string, string>();
+
+// Graph-family commands live in the vn-graph package (own flag set); hand the
+// raw argv over before this CLI's parser can reject their flags.
+if (["graph", "endings", "explore", "explain-ending"].includes(argv[0] ?? "")) {
+  const { runGraphCli } = await import("vn-graph/cli");
+  process.exit(await runGraphCli(argv));
+}
+
 const positional: string[] = [];
 const choiceById: Record<number, number> = {};
 let choices: number[] | undefined;
@@ -77,10 +89,6 @@ for (let i = 0; i < argv.length; i++) {
     const v = argv[++i];
     if (v !== "first" && v !== "last") usage();
     policy = v;
-  } else if (a === "--dot") {
-    const v = argv[++i];
-    if (v === undefined) usage();
-    flags.set(a, v);
   } else if (a === "--port") {
     port = Number(argv[++i] ?? "8017");
   } else if (a === "--scene-choice") {
@@ -94,7 +102,7 @@ for (let i = 0; i < argv.length; i++) {
 
 const [cmd, scenePath, manifestPath] = positional;
 if (!cmd || !scenePath) usage();
-if (cmd !== "route" && cmd !== "fixtures" && cmd !== "graph" && !manifestPath) usage();
+if (cmd !== "route" && cmd !== "fixtures" && !manifestPath) usage();
 
 function describeState(ev: Extract<PlayerEvent, { type: "dialogue" | "choice" }>): string {
   const bg = ev.state.background?.asset ?? (ev.state.fill != null ? `fill:${ev.state.fill}` : "-");
@@ -108,33 +116,6 @@ if (cmd === "serve") {
   if (!assetsDir) usage();
   const { serve } = await import("./serve.js");
   serve({ irDir, assetsDir, port });
-} else if (cmd === "graph") {
-  const irDir = scenePath;
-  if (!outPath) usage();
-  const { readdirSync } = await import("node:fs");
-  const { buildRouteGraph, standardTraversals, toDot } = await import("./graph.js");
-  const source = fsSceneSource(irDir);
-  const scenes = new Map<string, IrScene>();
-  for (const f of readdirSync(irDir).filter((f) => f.endsWith(".json"))) {
-    const name = f.replace(/\.json$/, "");
-    const s = source.load(name);
-    if (s) scenes.set(name, s);
-  }
-  const g = buildRouteGraph(scenes, startScene, standardTraversals(source, startScene));
-  writeFileSync(outPath, JSON.stringify(g, null, 1));
-  const dotPath = flags.get("--dot");
-  if (dotPath) writeFileSync(dotPath, toDot(g));
-  const observed = g.edges.filter((e) => e.observedBy.length > 0).length;
-  console.log(
-    `graph: ${Object.keys(g.nodes).length} scenes, ${g.edges.length} transitions ` +
-      `(${observed} observed dynamically), ${Object.values(g.nodes).filter((n) => n.terminal).length} terminal`,
-  );
-  if (g.missingScenes.length) console.log(`missing scenes: ${g.missingScenes.join(", ")}`);
-  if (g.unreferenced.length) console.log(`unreferenced: ${g.unreferenced.join(", ")}`);
-  for (const [label, t] of Object.entries(g.traversals)) {
-    console.log(`  ${label.padEnd(10)} ${t.route.length} scenes -> ${t.end}`);
-  }
-  console.log(`-> ${outPath}${dotPath ? ` + ${dotPath}` : ""}`);
 } else if (cmd === "fixtures") {
   const irDir = scenePath;
   const manifest = manifestPath;
@@ -185,7 +166,7 @@ if (cmd === "serve") {
   process.exit(r.end === "ending" ? 0 : 1);
 }
 
-if (cmd === "serve" || cmd === "fixtures" || cmd === "route" || cmd === "graph") {
+if (cmd === "serve" || cmd === "fixtures" || cmd === "route") {
   // handled above; the single-scene commands below do not apply
 } else {
 const scene = JSON.parse(readFileSync(scenePath, "utf8")) as IrScene;

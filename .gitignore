@@ -13,3 +13,4 @@ build/
 vn-runtime/web/bundle.js
 .claude/
 vn-runtime/web/shots-bundle.js
+vn-runtime/web/routes-bundle.js
