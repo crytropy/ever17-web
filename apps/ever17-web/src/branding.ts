@@ -14,7 +14,6 @@ import { EVER17_GAME_ID, EVER17_PROFILE, EVER17_START_SCENE, EVER17_TITLE } from
 export const EVER17_BRANDING: PlayerBranding = {
   title: EVER17_TITLE,
   subtitle: "-the out of infinity-",
-  hint: "plays from your own installation · 由你自己的安装文件运行",
   lang: "zh",
   themeColor: "#000814",
   pwaName: "Ever17",

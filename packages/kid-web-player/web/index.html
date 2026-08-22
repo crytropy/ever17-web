@@ -70,7 +70,11 @@
     color:#ffdede; border:1px solid #d98a8a; border-radius:4px; cursor:pointer; flex:none;
   }
   #error-text { white-space:pre-wrap; }
-  #hud { position:fixed; left:8px; top:6px; font-size:12px; color:#667; font-family:monospace; }
+  #hud {
+    position:fixed; left:14px; top:10px; z-index:20;
+    font-size:14px; letter-spacing:.14em; color:#9db3d8;
+    text-shadow:0 1px 3px rgba(0,0,0,.85); pointer-events:none;
+  }
   #controls { position:fixed; right:8px; top:6px; display:flex; flex-wrap:wrap;
               justify-content:flex-end; gap:6px; z-index:20; max-width:60vw; }
   #controls button {
@@ -160,9 +164,8 @@
         <button id="t-continue" class="hidden">CONTINUE</button>
         <button id="t-load">LOAD</button>
         <button id="t-settings">SETTINGS</button>
-        <button id="t-routes">ROUTES</button>
+        <button id="t-routes">RECORDS</button>
       </div>
-      <p id="titlehint">{{GAME_HINT}}</p>
     </div>
     <div id="loading" class="hidden"><span class="spinner"></span><span id="loading-text">converting artwork…</span></div>
   </div>
@@ -175,7 +178,7 @@
   <button id="btn-save" title="save menu (S)">SAVE</button>
   <button id="btn-load" title="load menu (D)">LOAD</button>
   <button id="btn-quick" title="quicksave (Q)">QS</button>
-  <button id="btn-routes" title="route explorer (R)">✦</button>
+  <button id="btn-routes" title="records (R)">RECORDS</button>
   <button id="btn-cfg" title="settings (O)">⚙</button>
   <button id="btn-title" title="return to title (T)">TITLE</button>
 </div>

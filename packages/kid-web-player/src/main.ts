@@ -252,7 +252,7 @@ class WebPlayer {
       else if (e.key === "s" || e.key === "S") this.openMenu("save");
       else if (e.key === "d" || e.key === "D") this.openMenu("load");
       else if (e.key === "q" || e.key === "Q") void this.saveToSlot(QUICK_SLOT);
-      else if (e.key === "r" || e.key === "R") this.openRoutes();
+      else if (e.key === "r" || e.key === "R") this.openRecords();
       else if (e.key === "o" || e.key === "O") this.openSettings();
       else if (e.key === "Escape") {
         backlogEl.classList.add("hidden");
@@ -271,14 +271,14 @@ class WebPlayer {
     btn.save.addEventListener("click", () => this.openMenu("save"));
     btn.load.addEventListener("click", () => this.openMenu("load"));
     btn.quick.addEventListener("click", () => void this.saveToSlot(QUICK_SLOT));
-    btn.routes.addEventListener("click", () => this.openRoutes());
+    btn.routes.addEventListener("click", () => this.openRecords());
     btn.cfg.addEventListener("click", () => this.openSettings());
     btn.title.addEventListener("click", () => void this.returnToTitle());
     titleMenu.newGame.addEventListener("click", () => void this.startNewGame());
     titleMenu.cont.addEventListener("click", () => void this.continueGame());
     titleMenu.load.addEventListener("click", () => this.openMenu("load"));
     titleMenu.settings.addEventListener("click", () => this.openSettings());
-    titleMenu.routes.addEventListener("click", () => this.openRoutes());
+    titleMenu.routes.addEventListener("click", () => this.openRecords());
     errorEl.querySelector("#error-retry")!.addEventListener("click", () => void this.retryAssets());
     errorEl.querySelector("#error-close")!.addEventListener("click", () => this.clearError());
     menuEl.querySelector("#menu-close")!.addEventListener("click", () => {
@@ -301,8 +301,9 @@ class WebPlayer {
     this.audio.applyVolumes();
   }
 
-  private openRoutes(): void {
-    void this.tracker?.flush().then(() => window.open("routes", "_blank"));
+  /** Open the player-facing records screen (never the developer graph). */
+  private openRecords(): void {
+    void this.tracker?.flush().then(() => window.open("records", "_blank"));
   }
 
   /** Award endings by the graph's own definitions (scene + dispatch
@@ -946,5 +947,6 @@ void bootPlayer().catch((err: unknown) => {
   (errorBox.querySelector("#error-retry") as HTMLElement).textContent = "reload";
   errorBox.querySelector("#error-retry")!.addEventListener("click", () => location.reload());
   errorBox.classList.remove("hidden");
-  document.getElementById("titlehint")!.textContent = "could not load the game package";
+  const hint = document.getElementById("titlehint");
+  if (hint) hint.textContent = "could not load the game package";
 });

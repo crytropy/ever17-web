@@ -87,6 +87,15 @@ export function serve(opts: ServeOptions): void {
     logLevel: "warning",
   });
   buildSync({
+    entryPoints: [join(webSrc, "records.ts")],
+    bundle: true,
+    outfile: join(webDir, "records-bundle.js"),
+    format: "iife",
+    target: "es2022",
+    sourcemap: "inline",
+    logLevel: "warning",
+  });
+  buildSync({
     entryPoints: [join(webSrc, "routes.ts")],
     bundle: true,
     outfile: join(webDir, "routes-bundle.js"),
@@ -95,7 +104,7 @@ export function serve(opts: ServeOptions): void {
     sourcemap: "inline",
     logLevel: "warning",
   });
-  console.log(`bundled web client + shots harness + route explorer -> ${webDir}`);
+  console.log(`bundled web client + records screen + shots harness + route explorer -> ${webDir}`);
 
   const roots: Record<string, string> = {
     "/ir": resolve(opts.irDir),
@@ -107,7 +116,7 @@ export function serve(opts: ServeOptions): void {
   const explorationPath = opts.explorationPath ?? resolve("build", "exploration.json");
   const gameJson = JSON.stringify(opts.meta, null, 1);
   /** Files whose contents carry {{...}} branding placeholders. */
-  const TEMPLATED = new Set(["index.html", "routes.html", "shots.html", "manifest.webmanifest", "sw.js"]);
+  const TEMPLATED = new Set(["index.html", "records.html", "routes.html", "shots.html", "manifest.webmanifest", "sw.js"]);
   const templateCache = new Map<string, string>();
 
   // Route graph for /routes: built once from the IR on first request (the
@@ -223,7 +232,13 @@ export function serve(opts: ServeOptions): void {
     }
     let templateName: string | null = null;
     if (!filePath) {
-      const rel = url === "/" ? "index.html" : url === "/routes" ? "routes.html" : normalize(url.slice(1));
+      // /records is the player's screen; the full technical graph stays
+      // available for development at /debug/routes.
+      const rel =
+        url === "/" ? "index.html"
+        : url === "/records" || url === "/routes" ? "records.html"
+        : url === "/debug/routes" ? "routes.html"
+        : normalize(url.slice(1));
       if (!rel.startsWith("..")) {
         filePath = join(webDir, rel);
         if (TEMPLATED.has(rel)) templateName = rel;

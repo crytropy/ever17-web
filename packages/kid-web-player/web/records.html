@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="{{GAME_LANG}}">
+<head>
+<meta charset="utf-8">
+<title>{{GAME_TITLE}} · records</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="{{THEME_COLOR}}">
+<style>
+  html, body { margin:0; min-height:100%; background:#000814; color:#cfe0ff;
+               font-family:"Songti SC","SimSun","Noto Serif CJK SC",serif;
+               padding:env(safe-area-inset-top) env(safe-area-inset-right)
+                       env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  #wrap { max-width:900px; margin:0 auto; padding:20px 18px 56px; box-sizing:border-box; }
+  header { display:flex; align-items:baseline; gap:16px; flex-wrap:wrap;
+           border-bottom:1px solid rgba(160,190,255,.25); padding-bottom:12px; margin-bottom:20px; }
+  h1 { font-size:22px; letter-spacing:.28em; margin:0; font-weight:normal; }
+  .back {
+    font:12px monospace; padding:5px 14px; background:rgba(20,30,60,.85); color:#9fc3ff;
+    border:1px solid #445; border-radius:4px; cursor:pointer; text-decoration:none;
+  }
+  .back:hover { border-color:#9fc3ff; color:#fff; }
+  .lede { color:#8093b8; font-size:13px; margin:0 0 4px; }
+  h2 { font-size:14px; letter-spacing:.24em; color:#9fc3ff; font-weight:normal;
+       margin:28px 0 12px; }
+  .viewpoint { margin-bottom:18px; }
+  .viewpoint > .name { font-size:16px; color:#dce8ff; margin-bottom:8px; }
+  .route { display:flex; gap:12px; align-items:baseline; flex-wrap:wrap;
+           padding:8px 0 8px 14px; border-left:2px solid rgba(160,190,255,.25); margin-bottom:6px; }
+  .route .rname { min-width:104px; color:#cfe0ff; font-size:14px; }
+  .days { display:flex; gap:6px; flex-wrap:wrap; }
+  .day {
+    font:12px/1 monospace; padding:5px 9px; border-radius:3px;
+    background:rgba(30,45,90,.55); border:1px solid rgba(160,190,255,.28); color:#b9cdf2;
+  }
+  .cards { display:grid; grid-template-columns:repeat(auto-fill, minmax(190px, 1fr)); gap:12px; }
+  .card {
+    background:rgba(20,32,66,.55); border:1px solid rgba(160,190,255,.3); border-radius:6px;
+    padding:14px 16px; min-height:62px; display:flex; flex-direction:column; justify-content:center; gap:5px;
+  }
+  .card.locked { background:rgba(12,18,38,.55); border-style:dashed; border-color:#37456b; color:#5d6d95; }
+  .card .title { font-size:15px; }
+  .card .meta { font:11px monospace; color:#7f93bb; letter-spacing:.08em; }
+  .empty { color:#7f93bb; font-size:13px; font-style:italic; }
+  a:focus-visible, button:focus-visible, .card:focus-visible {
+    outline:2px solid #9fc3ff; outline-offset:2px;
+  }
+  @media (max-width: 700px) {
+    #wrap { padding:14px 12px 40px; }
+    h1 { font-size:18px; }
+    .route { padding-left:10px; }
+    .route .rname { min-width:0; }
+    .cards { grid-template-columns:1fr; }
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <header>
+    <h1>RECORDS</h1>
+    <a class="back" id="back" href="./">← back</a>
+  </header>
+  <p class="lede" id="lede"></p>
+  <div id="content"></div>
+</div>
+<script src="records-bundle.js"></script>
+</body>
+</html>

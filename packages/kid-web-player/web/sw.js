@@ -4,7 +4,7 @@
  * Bump VERSION to invalidate pipeline data. */
 const VERSION = "{{SW_CACHE}}";
 const SHELL = ["./", "index.html", "bundle.js", "manifest.webmanifest", "icon-192.png", "icon-512.png",
-  "routes", "routes.html", "routes-bundle.js", "graph.json", "game.json"];
+  "records", "records.html", "records-bundle.js", "game.json", "narrative.json"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

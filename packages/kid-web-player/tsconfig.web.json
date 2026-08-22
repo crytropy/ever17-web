@@ -11,6 +11,7 @@
     "src/slots.ts",
     "src/completion.ts",
     "src/routes.ts",
+    "src/records.ts",
     "src/shots.ts"
   ]
 }
