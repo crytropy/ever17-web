@@ -57,5 +57,12 @@ export type {
   RouteProgressDefinition,
   EndingProgressDefinition,
 } from "./narrative.js";
+export {
+  PLAYER_DATA_FORMAT,
+  PLAYER_DATA_VERSION,
+  validatePlayerData,
+  summarizePlayerData,
+} from "./player-data.js";
+export type { PlayerDataExport, ExportedSlot, PlayerDataSummary } from "./player-data.js";
 export { collectSceneAssets, collectSceneMovies, bgmAssetName } from "./scene-assets.js";
 export type { AssetRef } from "./scene-assets.js";

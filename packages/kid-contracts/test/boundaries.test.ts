@@ -55,9 +55,11 @@ function sourceFiles(dir: string): string[] {
 }
 
 function importsOf(file: string): string[] {
-  // comments are stripped first: prose like `distinguish "x" from "y"` is not
-  // an import, and scanning it produced false violations
-  const text = stripComments(readFileSync(file, "utf8"));
+  // Comments and template literals are stripped first: an import specifier is
+  // always a plain quoted string, so prose in either of those - `distinguish
+  // "x" from "y"`, or a message built with ${...} - is not an import, and
+  // scanning it produced false violations.
+  const text = stripTemplateLiterals(stripComments(readFileSync(file, "utf8")));
   const specs: string[] = [];
   const re = /(?:from\s+|import\s*\(\s*|import\s+)["']([^"']+)["']/g;
   for (const m of text.matchAll(re)) specs.push(m[1]!);
@@ -69,6 +71,10 @@ function rootPackage(spec: string): string | null {
   if (spec.startsWith(".") || spec.startsWith("node:")) return null;
   const parts = spec.split("/");
   return spec.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0]!;
+}
+
+function stripTemplateLiterals(ts: string): string {
+  return ts.replace(/`(?:\\[\s\S]|[^`\\])*`/g, "``");
 }
 
 function stripComments(ts: string): string {

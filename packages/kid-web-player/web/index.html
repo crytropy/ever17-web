@@ -116,6 +116,12 @@
   .slot .empty-thumb { width:100%; aspect-ratio:4/3; background:#0a0f20; border-radius:3px;
     display:flex; align-items:center; justify-content:center; color:#456; margin-bottom:6px; }
   .slot .when { color:#68a; font-size:10px; }
+  .menu-actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:14px; }
+  .menu-actions button {
+    font:12px monospace; padding:5px 14px; background:rgba(20,30,60,.85);
+    color:#9fc3ff; border:1px solid #445; border-radius:4px; cursor:pointer;
+  }
+  .menu-actions button:hover { border-color:#9fc3ff; }
   #menu-close, #settings-close {
     margin-top:14px; font:13px monospace; padding:5px 16px; background:rgba(20,30,60,.85);
     color:#9fc3ff; border:1px solid #445; border-radius:4px; cursor:pointer;
@@ -197,6 +203,11 @@
   <div id="menu-box">
     <div id="menu-title">SAVE</div>
     <div id="menu-slots"></div>
+    <div class="menu-actions">
+      <button id="menu-export">export save data</button>
+      <button id="menu-import">import save data</button>
+      <input id="menu-file" type="file" accept="application/json,.json" hidden>
+    </div>
     <button id="menu-close">close</button>
   </div>
 </div>

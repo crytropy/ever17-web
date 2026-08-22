@@ -16,7 +16,8 @@
     "./compat": "./src/compat.ts",
     "./import-report": "./src/import-report.ts",
     "./persistence": "./src/persistence.ts",
-    "./narrative": "./src/narrative.ts"
+    "./narrative": "./src/narrative.ts",
+    "./player-data": "./src/player-data.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

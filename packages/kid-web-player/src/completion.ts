@@ -133,6 +133,17 @@ export class CompletionTracker {
     }, 800);
   }
 
+  /**
+   * Fold an external state into this tracker (importing a backup). Progress
+   * is a union, so nothing already discovered is lost.
+   */
+  absorb(state: CompletionState): void {
+    for (const s of state.visitedScenes) this.mark(this.scenes, s);
+    for (const c of state.visitedChoices) this.mark(this.choices, c);
+    for (const e of state.endings) this.mark(this.endings, e);
+    for (const a of state.discoveredAssets) this.mark(this.assets, a);
+  }
+
   snapshot(): CompletionState {
     return {
       version: 1,

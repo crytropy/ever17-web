@@ -24,6 +24,7 @@ import { loadConfig, saveConfig, type VnConfig } from "./config.js";
 import { ALL_SLOTS, AUTO_SLOT, QUICK_SLOT, SaveSlots, type SlotMeta } from "./slots.js";
 import { CompletionTracker, IdbCompletionStore } from "./completion.js";
 import { PersistentProgress } from "./progress.js";
+import { applyPlayerDataImport, buildPlayerDataExport, mergeCompletion } from "./transfer.js";
 import { LoadingIndicator } from "./loading-indicator.js";
 import { computeAutoAdvanceDelay } from "./auto-timing.js";
 import { matchEndings, type RouteGraphJson } from "kid-graph/model";
@@ -281,6 +282,16 @@ class WebPlayer {
     titleMenu.routes.addEventListener("click", () => this.openRecords());
     errorEl.querySelector("#error-retry")!.addEventListener("click", () => void this.retryAssets());
     errorEl.querySelector("#error-close")!.addEventListener("click", () => this.clearError());
+    menuEl.querySelector("#menu-export")!.addEventListener("click", () => void this.exportPlayerData());
+    menuEl.querySelector("#menu-import")!.addEventListener("click", () => {
+      (menuEl.querySelector("#menu-file") as HTMLInputElement).click();
+    });
+    (menuEl.querySelector("#menu-file") as HTMLInputElement).addEventListener("change", (e) => {
+      const input = e.target as HTMLInputElement;
+      const file = input.files?.[0];
+      input.value = ""; // let the same file be chosen again later
+      if (file) void this.importPlayerData(file);
+    });
     menuEl.querySelector("#menu-close")!.addEventListener("click", () => {
       menuEl.classList.add("hidden");
       if (this.auto) this.scheduleAuto();
@@ -639,6 +650,81 @@ class WebPlayer {
       menuSlotsEl.appendChild(div);
     }
     menuEl.classList.remove("hidden");
+  }
+
+  // ------------------------------------------------ save data transfer
+  /** Write every save, setting and unlock to a file the player keeps. */
+  private async exportPlayerData(): Promise<void> {
+    try {
+      await this.tracker?.flush();
+      const doc = buildPlayerDataExport(
+        {
+          storage: localStorage,
+          ns: this.ns,
+          gameId: this.meta.gameId,
+          policy: this.meta.persistence ?? null,
+          engineVersion: this.meta.engineVersion,
+        },
+        this.tracker?.snapshot() ?? null,
+      );
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const blob = new Blob([JSON.stringify(doc, null, 1)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${this.meta.gameId}-savedata-${stamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      toast(`exported ${doc.slots.length} save slot(s)`);
+    } catch (err) {
+      toast(`export failed: ${(err as Error).message}`);
+    }
+  }
+
+  /** Restore a previously exported file, merging rather than replacing. */
+  private async importPlayerData(file: File): Promise<void> {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await file.text());
+    } catch (err) {
+      toast(`could not read that file: ${(err as Error).message}`);
+      return;
+    }
+    if (
+      !(await confirmDialog(
+        `Import save data from "${file.name}"?\n\n` +
+          "Slots in the file replace those slots.\nOther slots, and anything already unlocked, are kept.",
+      ))
+    ) {
+      return;
+    }
+    const outcome = applyPlayerDataImport(
+      {
+        storage: localStorage,
+        ns: this.ns,
+        gameId: this.meta.gameId,
+        policy: this.meta.persistence ?? null,
+      },
+      parsed,
+    );
+    if (!outcome.ok) {
+      toast(`import failed: ${outcome.reason ?? "unusable file"}`);
+      return;
+    }
+    if (outcome.completion && this.tracker) {
+      // seeing something is never undone: union with what is already known
+      const merged = mergeCompletion(this.tracker.snapshot(), outcome.completion);
+      this.tracker.absorb(merged);
+      await this.tracker.flush();
+    }
+    // reload settings and slot listing from the freshly written storage
+    this.config = loadConfig(localStorage, this.ns);
+    this.applyConfig();
+    this.slots = new SaveSlots(localStorage, this.ns);
+    this.openMenu("load");
+    toast(`imported ${outcome.slotsRestored} save slot(s)`);
   }
 
   // ------------------------------------------------ pacing modes
