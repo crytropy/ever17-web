@@ -1,0 +1,151 @@
+/**
+ * Reading a save written by an older build.
+ *
+ * v2 records the full-screen CG as part of the picture. v1 did not record it
+ * at all - and "the format never asked" is not the same fact as "there was no
+ * CG". Coercing the first into the second is what made a legacy save restore
+ * to the bare fill the CG had been covering: a white screen where the artwork
+ * belongs, with nothing to say anything had gone wrong.
+ *
+ * So a v1 save is only accepted when the data it does carry proves what the
+ * final picture was. When it does not, the load is refused with a reason the
+ * player can act on, and the save is left exactly as it is - an unreadable
+ * save is still the player's, and may become readable again.
+ *
+ * Everything here is pure and game-independent: it reasons about the recorded
+ * presentation and its action deltas, never about a particular game's scenes
+ * or assets.
+ */
+import type { LayerState, PresentationAction } from "./presentation.js";
+import { SAVE_FORMAT, SAVE_VERSION, SUPPORTED_SAVE_VERSIONS, type SessionSave } from "./save.js";
+
+export type SaveMigrationFailure = "invalid-save" | "unsupported-version" | "legacy-picture-incomplete";
+
+export type SaveMigrationResult =
+  | { ok: true; save: SessionSave; migrated: boolean }
+  | { ok: false; reason: SaveMigrationFailure; message: string };
+
+/** Player-facing wording for a save this build cannot safely display. */
+export const LEGACY_PICTURE_INCOMPLETE_MESSAGE =
+  "This save was created by an older build and does not contain enough picture " +
+  "state to restore this scene safely. Load another save or start a new game.";
+
+const isObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** A layer the renderer can actually draw: it needs at least a name. */
+function asLayer(v: unknown): LayerState | null {
+  if (!isObject(v)) return null;
+  if (typeof v["asset"] !== "string" || v["asset"].length === 0) return null;
+  return v as unknown as LayerState;
+}
+
+/**
+ * What the recorded action deltas prove about the CG.
+ *
+ * The deltas are the presented event's own script, in execution order, so the
+ * last one that touches the full-screen layer decides what is on top of it:
+ * a cgEffect puts a CG there, a background or a fill takes it away.
+ *
+ * Returns `undefined` when the deltas say nothing either way.
+ */
+function cgFromActions(actions: readonly PresentationAction[]): LayerState | null | undefined {
+  let verdict: LayerState | null | undefined;
+  for (const a of actions) {
+    if (a.kind === "cgEffect") {
+      // Only a CG with a resolved file is evidence of something drawn.
+      verdict = a.file ? ({ asset: a.asset ?? "", file: a.file, width: null, height: null, x: null, slot: null } as LayerState) : null;
+    } else if (a.kind === "setBackground" || a.kind === "fillScreen") {
+      verdict = null;
+    }
+  }
+  return verdict;
+}
+
+/**
+ * Decide the CG of a v1 picture, or report that it cannot be known.
+ *
+ * Order matters: the deltas describe what the event actually did, so they
+ * outrank the settled state. Only when they are silent does the state get a
+ * say, and only where the state is unambiguous.
+ */
+function recoverLegacyCg(
+  presentation: Record<string, unknown>,
+  actions: readonly PresentationAction[],
+): { ok: true; cg: LayerState | null } | { ok: false } {
+  const fromActions = cgFromActions(actions);
+  if (fromActions !== undefined) return { ok: true, cg: fromActions };
+
+  const background = asLayer(presentation["background"]);
+  if (background) {
+    // A background is the picture. A CG would have had to be drawn over it by
+    // an action, and the deltas showed none.
+    return { ok: true, cg: null };
+  }
+  const fill = presentation["fill"];
+  if (fill === null || fill === undefined) {
+    // Nothing was covering anything: no background, no fill, so no CG either.
+    return { ok: true, cg: null };
+  }
+  // A bare fill with no background and no deltas. The fill may have been the
+  // whole picture, or it may have been the surface a CG was sitting on - and
+  // v1 recorded nothing that tells the two apart. Guessing here is what
+  // produced the white screen.
+  return { ok: false };
+}
+
+/**
+ * Normalize a stored save to the current version.
+ *
+ * The result is either a save the runtime can use directly, or a refusal with
+ * a reason. Nothing is written, nothing is repaired in place: migration is a
+ * reading of stored bytes, not an edit of them.
+ */
+export function migrateSave(raw: unknown): SaveMigrationResult {
+  if (!isObject(raw)) return { ok: false, reason: "invalid-save", message: "that save could not be read" };
+  if (raw["format"] !== SAVE_FORMAT) {
+    return { ok: false, reason: "invalid-save", message: `that file is not a save (format "${String(raw["format"])}")` };
+  }
+  const version = raw["version"];
+  if (typeof version !== "number" || !SUPPORTED_SAVE_VERSIONS.includes(version)) {
+    return {
+      ok: false,
+      reason: "unsupported-version",
+      message: `that save was written by a newer build (version ${String(version)})`,
+    };
+  }
+  const vm = raw["vm"];
+  if (!isObject(vm)) return { ok: false, reason: "invalid-save", message: "that save has no VM state" };
+  const presentation = vm["presentation"];
+  if (!isObject(presentation)) {
+    return { ok: false, reason: "invalid-save", message: "that save has no presentation state" };
+  }
+
+  if (version === SAVE_VERSION) {
+    // v2 must be explicit: an absent cg here is a malformed v2 save, not a
+    // legacy one, and must not be quietly treated as either.
+    if (!("cg" in presentation)) {
+      return { ok: false, reason: "invalid-save", message: "that save is missing its CG state" };
+    }
+    const cg = presentation["cg"];
+    if (cg !== null && asLayer(cg) === null) {
+      return { ok: false, reason: "invalid-save", message: "that save's CG state is malformed" };
+    }
+    return { ok: true, save: raw as unknown as SessionSave, migrated: false };
+  }
+
+  const actions = Array.isArray(vm["actions"]) ? (vm["actions"] as PresentationAction[]) : [];
+  const recovered = recoverLegacyCg(presentation, actions);
+  if (!recovered.ok) {
+    return { ok: false, reason: "legacy-picture-incomplete", message: LEGACY_PICTURE_INCOMPLETE_MESSAGE };
+  }
+
+  // A copy: the stored save is left untouched, so a refusal or a later build
+  // can still read the original bytes.
+  const save = JSON.parse(JSON.stringify(raw)) as Record<string, unknown>;
+  const savedVm = save["vm"] as Record<string, unknown>;
+  const savedPresentation = savedVm["presentation"] as Record<string, unknown>;
+  savedPresentation["cg"] = recovered.cg;
+  save["version"] = SAVE_VERSION;
+  return { ok: true, save: save as unknown as SessionSave, migrated: true };
+}

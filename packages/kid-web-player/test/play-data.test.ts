@@ -34,7 +34,7 @@ function fakeSave(scene: string): SessionSave {
   return {
     format: SAVE_FORMAT,
     version: SAVE_VERSION,
-    vm: { scene, block: "00000010", pc: 0, steps: 1, presentation: { background: null, sprites: [], bgm: null, fill: 0 }, actions: [] },
+    vm: { scene, block: "00000010", pc: 0, steps: 1, presentation: { background: null, cg: null, sprites: [], bgm: null, fill: 0 }, actions: [] },
     vars: [],
     sysVars: [],
     counters: { lines: 1, scenes: 1 },

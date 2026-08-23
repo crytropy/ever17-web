@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { GameSession, type AsyncSceneSource } from "kid-runtime";
-import { runCountsAsCompletion, type AssetIndex, type IrBlock, type IrScene, type SessionSave } from "kid-contracts";
+import { migrateSave, runCountsAsCompletion, SAVE_VERSION, type AssetIndex, type IrBlock, type IrScene, type SessionSave } from "kid-contracts";
 import { matchEndings, type EndingInfo } from "kid-graph/model";
 import {
   RewindLog,
@@ -337,6 +337,32 @@ describe("ending recognition after a rewind", () => {
     expect(runCountsAsCompletion("ending")).toBe(true);
     for (const reason of ["missing-scene", "stepLimit", "quit", "rewind", "save"]) {
       expect(runCountsAsCompletion(reason), reason).toBe(false);
+    }
+  });
+});
+
+describe("rewind points made by this build", () => {
+  /**
+   * A rewind point is a save the player never took, so it goes through the
+   * same contract - including the CG. If it did not, jumping back would land
+   * on the same bare fill that a legacy save does.
+   */
+  it("always carry explicit CG state", async () => {
+    const { session, log } = await playAndSnapshot(STRAIGHT, 4);
+    expect(log.size).toBe(4);
+    for (const ordinal of log.ordinals()) {
+      const point = log.get(ordinal)!;
+      expect(point.save.version, "written at the current version").toBe(SAVE_VERSION);
+      expect("cg" in point.save.vm.presentation, `ordinal ${ordinal} says whether a CG is showing`).toBe(true);
+    }
+    expect(session.lines).toBe(4);
+  });
+
+  it("migrate as no-ops, because they are already current", async () => {
+    const { log } = await playAndSnapshot(STRAIGHT, 2);
+    for (const ordinal of log.ordinals()) {
+      const result = migrateSave(log.get(ordinal)!.save);
+      expect(result).toMatchObject({ ok: true, migrated: false });
     }
   });
 });

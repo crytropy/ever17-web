@@ -38,6 +38,7 @@ import {
 } from "./play-data.js";
 import { applyPlayerDataImport, buildPlayerDataExport, mergeCompletion } from "./transfer.js";
 import { PlayerDataBackup } from "./backup.js";
+import { migrateSave } from "kid-contracts";
 import { LoadingIndicator } from "./loading-indicator.js";
 import { computeAutoAdvanceDelay } from "./auto-timing.js";
 import { renderRecordsInto } from "./records.js";
@@ -771,12 +772,41 @@ class WebPlayer {
   }
 
   private async loadFromSlot(slot: string): Promise<void> {
-    const save = this.slots.get(slot);
-    if (!save) {
+    const stored = this.slots.get(slot);
+    if (!stored) {
       toast("empty slot");
       return;
     }
+    // A save written by an older build may not record the whole picture. It
+    // is read, never rewritten: nothing here touches storage, so a save this
+    // build cannot show is still there for the player to export, and for a
+    // later build to understand.
+    const migrated = migrateSave(stored);
+    if (!migrated.ok) {
+      await this.reportIncompatibleSave(slot, migrated);
+      return;
+    }
+    const save = migrated.save;
     await this.resumeFrom(save, `loaded: ${this.chapterLabel(save.vm.scene)}`);
+  }
+
+  /**
+   * Tell the player about a save this build cannot display, and leave
+   * everything else alone.
+   *
+   * The session they are in stays playable, the slot is untouched, and the
+   * offer is the one that helps: pick a different save, or keep the data by
+   * exporting it. Nothing is reset on their behalf.
+   */
+  private async reportIncompatibleSave(slot: string, failure: { reason: string; message: string }): Promise<void> {
+    const name = slot === QUICK_SLOT ? "the quicksave" : slot === AUTO_SLOT ? "the autosave" : `slot ${slot}`;
+    await confirmDialog(`Cannot load ${name}.\n\n${failure.message}`, {
+      okLabel: "choose another save",
+      extra: { label: "export save data", busyLabel: "exporting…", run: () => this.exportPlayerData() },
+    });
+    // Whatever they chose, the load menu is the useful place to be next.
+    if (this.session) this.openMenu("load");
+    else this.showTitle();
   }
 
   /**

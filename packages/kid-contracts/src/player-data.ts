@@ -16,7 +16,7 @@
  */
 import { PERSISTENT_STATE_FORMAT, PERSISTENT_STATE_VERSION, type PersistentState } from "./persistence.js";
 import type { PresentationAction } from "./presentation.js";
-import { SAVE_FORMAT, SAVE_VERSION, type SessionSave } from "./save.js";
+import { SAVE_FORMAT, SAVE_VERSION, SUPPORTED_SAVE_VERSIONS, type SessionSave } from "./save.js";
 
 export const PLAYER_DATA_FORMAT = "kid-player-data";
 export const PLAYER_DATA_VERSION = 1;
@@ -242,7 +242,7 @@ function presentationActionProblem(v: unknown): string | null {
 }
 
 /** The saved VM position and the screen it was presenting. */
-function validateVmState(vm: unknown, where: string): string | null {
+function validateVmState(vm: unknown, where: string, version: number): string | null {
   if (!isPlainObject(vm)) return `${where}: the save has no VM state`;
   if (!isName(vm["scene"])) return `${where}: the save names no scene`;
   if (!isName(vm["block"])) return `${where}: the save names no block`;
@@ -252,7 +252,11 @@ function validateVmState(vm: unknown, where: string): string | null {
   const p = vm["presentation"];
   if (!isPlainObject(p)) return `${where}: the save has no presentation state`;
   if (!isNullOr(p["background"], isLayerState)) return `${where}: the save's background is malformed`;
-  // optional: absent in saves written before the CG became part of the picture
+  // Required at v2, absent at v1. Either way, present means it must be a
+  // real layer or an explicit null.
+  if (version === SAVE_VERSION && !("cg" in p)) {
+    return `${where}: the save is missing its CG state`;
+  }
   if (p["cg"] !== undefined && !isNullOr(p["cg"], isLayerState)) {
     return `${where}: the save's CG layer is malformed`;
   }
@@ -293,9 +297,16 @@ function validateVmState(vm: unknown, where: string): string | null {
 function validateSessionSave(save: unknown, where: string): string | null {
   if (!isPlainObject(save)) return `${where}: the save is not an object`;
   if (save["format"] !== SAVE_FORMAT) return `${where}: unexpected save format "${String(save["format"])}"`;
-  if (save["version"] !== SAVE_VERSION) return `${where}: unsupported save version ${String(save["version"])}`;
+  // Both live versions are structurally acceptable here. Whether a v1 save
+  // can actually be *shown* is decided by migrateSave at load time, which is
+  // the only place that has the whole picture to reason about; refusing it at
+  // import would throw away data the player may still want to keep or move.
+  const version = save["version"];
+  if (typeof version !== "number" || !SUPPORTED_SAVE_VERSIONS.includes(version)) {
+    return `${where}: unsupported save version ${String(version)}`;
+  }
 
-  const vmProblem = validateVmState(save["vm"], where);
+  const vmProblem = validateVmState(save["vm"], where, version);
   if (vmProblem) return vmProblem;
 
   if (!isNumberPairs(save["vars"], PLAYER_DATA_LIMITS.maxVars)) return `${where}: the save's variables are malformed`;

@@ -3,7 +3,7 @@ export type { IrScene, IrBlock, IrOp, IrCondition, IrValue, DialogueLine } from 
 export { MANIFEST_SCHEMA_VERSION } from "./manifest.js";
 export type { AssetManifest, ManifestEntry } from "./manifest.js";
 export type * from "./presentation.js";
-export { SAVE_FORMAT, SAVE_VERSION } from "./save.js";
+export { SAVE_FORMAT, SAVE_VERSION, SUPPORTED_SAVE_VERSIONS } from "./save.js";
 export type { VmSaveState, SessionSave, BacklogEntry } from "./save.js";
 export { PROFILE_VERSION, DEFAULT_GAME_PROFILE } from "./profile.js";
 export type { GameProfile, EffectProfile, EffectVisual, EffectClear } from "./profile.js";
@@ -70,3 +70,5 @@ export {
 export type { PlayerDataExport, ExportedSlot, PlayerDataSummary } from "./player-data.js";
 export { collectSceneAssets, collectSceneMovies, bgmAssetName } from "./scene-assets.js";
 export type { AssetRef } from "./scene-assets.js";
+export { migrateSave, LEGACY_PICTURE_INCOMPLETE_MESSAGE } from "./save-migration.js";
+export type { SaveMigrationResult, SaveMigrationFailure } from "./save-migration.js";

@@ -3,6 +3,7 @@ import {
   PLAYER_DATA_FORMAT,
   PLAYER_DATA_LIMITS,
   playerDataSizeProblem,
+  migrateSave,
   SAVE_FORMAT,
   SAVE_VERSION,
   summarizePlayerData,
@@ -46,7 +47,7 @@ function fakeSave(scene: string, lines: number, vars: [number, number][] = []): 
   return {
     format: SAVE_FORMAT,
     version: SAVE_VERSION,
-    vm: { scene, block: "00000010", pc: 0, steps: 1, presentation: { background: null, sprites: [], bgm: null, fill: 0 }, actions: [] },
+    vm: { scene, block: "00000010", pc: 0, steps: 1, presentation: { background: null, cg: null, sprites: [], bgm: null, fill: 0 }, actions: [] },
     vars,
     sysVars: [],
     counters: { lines, scenes: 1 },
@@ -278,6 +279,7 @@ describe("structural validation of a SessionSave", () => {
     // a realistic presentation state, so the sprite cases have something to break
     (save["vm"] as Record<string, unknown>)["presentation"] = {
       background: { asset: "bg01", file: "images/bg01.png", width: 800, height: 600, x: 0, slot: null },
+      cg: null,
       sprites: [[1, { asset: "ch01", file: "images/ch01.png", width: 200, height: 400, x: 10, slot: 1 }]],
       bgm: "bgm01",
       fill: null,
@@ -513,5 +515,125 @@ describe("every PresentationAction kind", () => {
     expect(validatePlayerData(withActions(actions), GAME)).toMatch(/wait: unit/);
     expect(applyPlayerDataImport(ctx(s), withActions(actions)).ok).toBe(false);
     expect(s.map.size).toBe(0);
+  });
+});
+
+describe("save versions across import and export", () => {
+  /**
+   * A v1 save is structurally importable - refusing it here would throw away
+   * data the player may still want to keep or move to another browser. What
+   * it *cannot* do is be displayed without the picture state, and that is
+   * decided at load time by migrateSave, not here.
+   */
+  const v1Save = (scene: string) => {
+    const s = JSON.parse(JSON.stringify(fakeSave(scene, 3))) as Record<string, unknown>;
+    s["version"] = 1;
+    delete (s["vm"] as Record<string, Record<string, unknown>>)["presentation"]["cg"];
+    return s;
+  };
+
+  const docOf = (save: unknown) => ({
+    format: PLAYER_DATA_FORMAT,
+    version: 1,
+    gameId: GAME,
+    exportedAt: new Date(0).toISOString(),
+    slots: [{ slot: "1", meta: { slot: "1", label: "x", savedAt: 1, scene: "op00", lines: 3 }, save }],
+  });
+
+  it("accepts a v1 document so the player does not lose it", () => {
+    expect(validatePlayerData(docOf(v1Save("op00")), GAME)).toBeNull();
+  });
+
+  it("accepts a current v2 document", () => {
+    expect(validatePlayerData(docOf(fakeSave("op00", 3)), GAME)).toBeNull();
+  });
+
+  it("requires v2 to be explicit about its CG state", () => {
+    const s = JSON.parse(JSON.stringify(fakeSave("op00", 3))) as Record<string, unknown>;
+    delete (s["vm"] as Record<string, Record<string, unknown>>)["presentation"]["cg"];
+    expect(validatePlayerData(docOf(s), GAME)).toMatch(/missing its CG state/);
+  });
+
+  it("rejects a malformed CG at either version", () => {
+    for (const version of [1, 2]) {
+      const s = JSON.parse(JSON.stringify(fakeSave("op00", 3))) as Record<string, unknown>;
+      s["version"] = version;
+      (s["vm"] as Record<string, Record<string, unknown>>)["presentation"]["cg"] = { file: "x.png" };
+      expect(validatePlayerData(docOf(s), GAME), `v${version}`).toMatch(/CG layer is malformed/);
+    }
+  });
+
+  it("still refuses a version it has never heard of", () => {
+    const s = JSON.parse(JSON.stringify(fakeSave("op00", 3))) as Record<string, unknown>;
+    s["version"] = 7;
+    expect(validatePlayerData(docOf(s), GAME)).toMatch(/unsupported save version 7/);
+  });
+
+  it("imports a v1 save verbatim, leaving migration to load time", () => {
+    const s = mockStorage();
+    const outcome = applyPlayerDataImport(ctx(s), docOf(v1Save("op00")));
+    expect(outcome.ok).toBe(true);
+    const stored = (JSON.parse(s.map.get(`${NS}:save:1`)!) as { save: Record<string, unknown> }).save;
+    expect(stored["version"], "stored as written, not silently upgraded").toBe(1);
+    expect((stored["vm"] as Record<string, Record<string, unknown>>)["presentation"]).not.toHaveProperty("cg");
+  });
+
+  it("exports an incompatible save rather than dropping it", () => {
+    // an old save the current build cannot display is still the player's
+    const s = mockStorage();
+    new SaveSlots(s, NS).put("1", v1Save("op00") as never);
+    const doc = buildPlayerDataExport(ctx(s), null);
+    expect(doc.slots.map((x) => x.slot)).toEqual(["1"]);
+    expect((doc.slots[0]!.save as unknown as Record<string, unknown>)["version"]).toBe(1);
+    expect(validatePlayerData(doc, GAME), "and it round-trips").toBeNull();
+  });
+
+  it("writes a current save with explicit CG state", () => {
+    const s = mockStorage();
+    new SaveSlots(s, NS).put("1", fakeSave("op00", 3));
+    const stored = (JSON.parse(s.map.get(`${NS}:save:1`)!) as { save: Record<string, unknown> }).save;
+    const presentation = (stored["vm"] as Record<string, Record<string, unknown>>)["presentation"];
+    expect(stored["version"]).toBe(SAVE_VERSION);
+    expect("cg" in presentation, "a save this build writes always says").toBe(true);
+  });
+});
+
+describe("migration at load time", () => {
+  const v1 = (presentation: Record<string, unknown>, actions?: unknown[]) => {
+    const s = JSON.parse(JSON.stringify(fakeSave("op00", 3))) as Record<string, unknown>;
+    s["version"] = 1;
+    const vm = s["vm"] as Record<string, unknown>;
+    vm["presentation"] = { background: null, sprites: [], bgm: null, fill: null, ...presentation };
+    if (actions) vm["actions"] = actions;
+    else delete vm["actions"];
+    return s;
+  };
+
+  it("recovers a save whose picture is a plain background", () => {
+    const r = migrateSave(v1({ background: { asset: "bg01", file: "images/bg01.png", width: null, height: null, x: null, slot: null } }));
+    expect(r).toMatchObject({ ok: true, migrated: true });
+    expect(r.ok && r.save.vm.presentation.cg).toBeNull();
+  });
+
+  it("refuses a bare fill it cannot explain, and touches no storage", () => {
+    const s = mockStorage();
+    const save = v1({ fill: 1 });
+    new SaveSlots(s, NS).put("1", save as never);
+    const sizeBefore = s.map.size;
+    const before = s.map.get(`${NS}:save:1`);
+
+    const r = migrateSave(save);
+    expect(r).toMatchObject({ ok: false, reason: "legacy-picture-incomplete" });
+    expect(s.map.size, "refusing writes nothing").toBe(sizeBefore);
+    expect(s.map.get(`${NS}:save:1`), "and changes nothing").toBe(before);
+  });
+
+  it("leaves another slot loadable", () => {
+    const s = mockStorage();
+    const slots = new SaveSlots(s, NS);
+    slots.put("1", v1({ fill: 1 }) as never);
+    slots.put("2", fakeSave("t_1a", 9));
+    expect(migrateSave(slots.get("1")).ok).toBe(false);
+    expect(migrateSave(slots.get("2")).ok, "a good slot is unaffected").toBe(true);
   });
 });
