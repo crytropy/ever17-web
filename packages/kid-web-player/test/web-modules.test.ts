@@ -234,3 +234,28 @@ describe("storage namespacing", () => {
     expect(loadConfig(s, "e17vn").bgmVolume).toBe(0.1);
   });
 });
+
+describe("records module is safe for the game bundle to import", () => {
+  /**
+   * The game draws RECORDS as an overlay, which means main.ts imports
+   * records.ts. When that module also booted the standalone page, the game
+   * bundle ran the page bootstrap on load and threw looking for elements that
+   * only exist on /records. Rules and rendering stay side-effect free; the
+   * page's entry point is records-page.ts.
+   */
+  it("importing it touches no page and starts no work", async () => {
+    const mod = await import("../src/records.js");
+    expect(typeof mod.groupDiscoveredChapters).toBe("function");
+    expect(typeof mod.endingCardsFor).toBe("function");
+    expect(typeof mod.renderRecordsInto).toBe("function");
+  });
+
+  it("has no top-level bootstrap, and the page entry keeps one", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const { join, dirname } = await import("node:path");
+    const src = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
+    expect(readFileSync(join(src, "records.ts"), "utf8")).not.toMatch(/^\s*void main\(\)/m);
+    expect(readFileSync(join(src, "records-page.ts"), "utf8")).toMatch(/^\s*void main\(\)/m);
+  });
+});

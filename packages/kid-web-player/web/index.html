@@ -97,9 +97,55 @@
     color:#9fc3ff; border:1px solid #445; border-radius:4px; cursor:pointer;
   }
   .confirm-actions button:hover { border-color:#9fc3ff; }
-  #menu, #settings, #confirm {
+  #menu, #settings, #confirm, #records {
     position:fixed; inset:0; z-index:25; background:rgba(0,0,10,.8);
     display:flex; align-items:center; justify-content:center;
+  }
+  /* RECORDS overlay: the same screen as /records, shown without navigating
+     away - leaving the page would end the run the player is in. */
+  #records-box {
+    background:#0d1428; border:1px solid #445; border-radius:8px; padding:18px 22px;
+    max-width:760px; width:92vw; max-height:84vh; overflow-y:auto;
+  }
+  #records-content h2 {
+    font-size:13px; letter-spacing:.24em; color:#9fc3ff; font-weight:normal; margin:22px 0 10px;
+  }
+  #records-content h2:first-child { margin-top:4px; }
+  #records-content .viewpoint { margin-bottom:16px; }
+  #records-content .viewpoint > .name { font-size:15px; color:#dce8ff; margin-bottom:6px; }
+  #records-content .route {
+    display:flex; gap:12px; align-items:baseline; flex-wrap:wrap;
+    padding:7px 0 7px 14px; border-left:2px solid rgba(160,190,255,.25); margin-bottom:5px;
+  }
+  #records-content .route .rname { min-width:104px; color:#cfe0ff; font-size:14px; }
+  #records-content .days { display:flex; gap:6px; flex-wrap:wrap; }
+  #records-content .day {
+    font:12px/1 monospace; padding:5px 9px; border-radius:3px;
+    background:rgba(30,45,90,.55); border:1px solid rgba(160,190,255,.28); color:#b9cdf2;
+  }
+  #records-content .cards {
+    display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:10px;
+  }
+  #records-content .card {
+    background:rgba(20,32,66,.55); border:1px solid rgba(160,190,255,.3); border-radius:6px;
+    padding:12px 14px; min-height:56px; display:flex; flex-direction:column;
+    justify-content:center; gap:4px;
+  }
+  #records-content .card.locked {
+    background:rgba(12,18,38,.55); border-style:dashed; border-color:#37456b; color:#5d6d95;
+  }
+  #records-content .card .title { font-size:15px; }
+  #records-content .card .meta { font:11px monospace; color:#7f93bb; letter-spacing:.08em; }
+  #records-content .empty { color:#7f93bb; font-size:13px; font-style:italic; }
+  #records-close {
+    margin-top:14px; font:13px monospace; padding:5px 16px; background:rgba(20,30,60,.85);
+    color:#9fc3ff; border:1px solid #445; border-radius:4px; cursor:pointer;
+  }
+  #records-close:hover { border-color:#9fc3ff; }
+  @media (max-width: 700px) {
+    #records-content .cards { grid-template-columns:1fr; }
+    #records-content .route { padding-left:10px; }
+    #records-content .route .rname { min-width:0; }
   }
   #menu-box {
     background:#0d1428; border:1px solid #445; border-radius:8px; padding:18px 22px;
@@ -240,6 +286,13 @@
     </div>
     <p class="cfg-note" id="cfg-reset-note"></p>
     <button id="settings-close">close</button>
+  </div>
+</div>
+<div id="records" class="hidden">
+  <div id="records-box">
+    <div id="menu-title">RECORDS</div>
+    <div id="records-content"></div>
+    <button id="records-close">back</button>
   </div>
 </div>
 <div id="toast"></div>

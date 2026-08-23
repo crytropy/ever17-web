@@ -13,19 +13,18 @@
  *   - an ending shows its name only once collected, otherwise a locked card;
  *   - a route the player has never entered is never named, so a later,
  *     unlocked route cannot be spoiled by the imported data containing it.
+ *
+ * Rules and rendering only, with no page bootstrap: the game imports this to
+ * draw the same screen as an in-game overlay, because navigating to /records
+ * from a running session would end the run. The standalone page's entry point
+ * is `records-page.ts`.
  */
 import {
   labelForScene,
   endingById,
-  type GamePackageMeta,
   type NarrativeProgressCatalog,
   type SceneProgressLabel,
 } from "kid-contracts";
-import { CompletionTracker, IdbCompletionStore } from "./completion.js";
-import { readActiveScope } from "./play-data.js";
-import { SaveSlots } from "./slots.js";
-
-const $ = (id: string): HTMLElement => document.getElementById(id)!;
 
 const el = (tag: string, className?: string, text?: string): HTMLElement => {
   const node = document.createElement(tag);
@@ -145,6 +144,28 @@ export function endingCardsFor(
   return cards;
 }
 
+/**
+ * Draw the whole records screen into a container.
+ *
+ * Shared by the standalone `/records` page and the in-game overlay, so the
+ * two can never drift apart - and so opening records from a running game
+ * needs no navigation, which would throw the session away.
+ */
+export function renderRecordsInto(
+  content: HTMLElement,
+  catalog: NarrativeProgressCatalog | null,
+  visited: ReadonlySet<string>,
+  collected: ReadonlySet<string>,
+): void {
+  content.replaceChildren();
+  if (!catalog) {
+    content.appendChild(el("p", "empty", "这个游戏没有提供章节名称。"));
+    return;
+  }
+  renderChapters(content, catalog, visited);
+  renderEndings(content, catalog, collected);
+}
+
 function renderChapters(
   content: HTMLElement,
   catalog: NarrativeProgressCatalog,
@@ -190,46 +211,3 @@ function renderEndings(
   }
   content.appendChild(cards);
 }
-
-async function main(): Promise<void> {
-  const content = $("content");
-  const meta = await fetch("game.json")
-    .then((r) => (r.ok ? (r.json() as Promise<GamePackageMeta>) : null))
-    .catch(() => null);
-  const catalog = await fetch("narrative.json")
-    .then((r) => (r.ok ? (r.json() as Promise<NarrativeProgressCatalog>) : null))
-    .catch(() => null);
-
-  if (meta?.branding?.title) {
-    document.title = `${meta.branding.title} · records`;
-  }
-  if (!catalog) {
-    content.appendChild(el("p", "empty", "这个游戏没有提供章节名称。"));
-    return;
-  }
-
-  const ns = meta?.profile.storageNamespace ?? "kidvn";
-  const scope = readActiveScope(localStorage, ns);
-  const tracker = await CompletionTracker.open(new IdbCompletionStore(scope.completionDb)).catch(() => null);
-  const visited = new Set(tracker?.scenes ?? []);
-  const collected = new Set(tracker?.endings ?? []);
-
-  // "last played" comes from the newest save, so it survives a reload
-  try {
-    const slots = new SaveSlots(localStorage, scope.storagePrefix);
-    const list = slots.list();
-    const latest = list.length > 0 ? list.reduce((a, b) => (b.savedAt > a.savedAt ? b : a)) : null;
-    if (latest) {
-      $("lede").textContent = `最后游玩 · ${labelForScene(catalog, latest.scene).shortLabel}`;
-    }
-  } catch {
-    /* storage unavailable: the rest of the page still renders */
-  }
-
-  renderChapters(content, catalog, visited);
-  renderEndings(content, catalog, collected);
-}
-
-// Only boot the page in a browser: this module also exports the pure
-// disclosure rules, which tests import without wanting a page.
-if (typeof document !== "undefined") void main();

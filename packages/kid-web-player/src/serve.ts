@@ -87,7 +87,7 @@ export function serve(opts: ServeOptions): void {
     logLevel: "warning",
   });
   buildSync({
-    entryPoints: [join(webSrc, "records.ts")],
+    entryPoints: [join(webSrc, "records-page.ts")],
     bundle: true,
     outfile: join(webDir, "records-bundle.js"),
     format: "iife",

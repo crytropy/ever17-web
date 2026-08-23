@@ -36,6 +36,7 @@ import {
 import { applyPlayerDataImport, buildPlayerDataExport, mergeCompletion } from "./transfer.js";
 import { LoadingIndicator } from "./loading-indicator.js";
 import { computeAutoAdvanceDelay } from "./auto-timing.js";
+import { renderRecordsInto } from "./records.js";
 import { AutoAdvanceTimer } from "./auto-timer.js";
 import { matchEndings, type RouteGraphJson } from "kid-graph/model";
 
@@ -72,6 +73,8 @@ const menuEl = $("menu");
 const menuTitleEl = menuEl.querySelector("#menu-title") as HTMLElement;
 const menuSlotsEl = menuEl.querySelector("#menu-slots") as HTMLElement;
 const settingsEl = $("settings");
+const recordsEl = $("records");
+const recordsContentEl = $("records-content");
 const confirmEl = $("confirm");
 const confirmTextEl = $("confirm-text");
 const loadingEl = $("loading");
@@ -284,6 +287,12 @@ class WebPlayer {
     window.vnAssetsBase = assetsBase;
     textboxEl.addEventListener("click", () => this.advance());
     document.addEventListener("keydown", (e) => {
+      // RECORDS is modal. Without this, keys still reached the game behind it
+      // - including T, which left the player looking at the title screen.
+      if (!recordsEl.classList.contains("hidden")) {
+        if (e.key === "Escape" || e.key === "r" || e.key === "R") this.closeRecords();
+        return;
+      }
       if (e.key === "Enter" || e.key === " ") this.advance();
       else if (e.key === "a" || e.key === "A") this.toggleAuto();
       else if (e.key === "l" || e.key === "L") this.toggleBacklog();
@@ -322,6 +331,10 @@ class WebPlayer {
       (menuEl.querySelector("#menu-file") as HTMLInputElement).click();
     });
     settingsEl.querySelector("#cfg-reset")!.addEventListener("click", () => void this.resetPlayData());
+    recordsEl.querySelector("#records-close")!.addEventListener("click", () => this.closeRecords());
+    recordsEl.addEventListener("click", (e) => {
+      if (e.target === recordsEl) this.closeRecords(); // click the backdrop
+    });
     this.watchOtherTabs();
     errorEl.querySelector("#error-retry")!.addEventListener("click", () => void this.retryAssets());
     errorEl.querySelector("#error-close")!.addEventListener("click", () => this.clearError());
@@ -355,9 +368,35 @@ class WebPlayer {
     this.audio.applyVolumes();
   }
 
-  /** Open the player-facing records screen (never the developer graph). */
+  /**
+   * Open the player-facing records screen (never the developer graph).
+   *
+   * Shown as an overlay rather than a page: the session lives in memory, so
+   * navigating to /records - which a blocked popup turns into a same-tab
+   * navigation, and which is what a standalone/PWA window does anyway - threw
+   * the run away and dropped the player back at the title.
+   */
   private openRecords(): void {
-    void this.tracker?.flush().then(() => window.open("records", "_blank"));
+    this.autoTimer.cancel();
+    // The tracker's in-memory view is already current; the flush is only for
+    // durability, so the screen does not need to wait for it.
+    renderRecordsInto(
+      recordsContentEl,
+      this.catalog,
+      new Set(this.tracker?.scenes ?? []),
+      new Set(this.tracker?.endings ?? []),
+    );
+    recordsEl.classList.remove("hidden");
+    void this.tracker?.flush().catch(() => {
+      /* the screen is drawn from memory either way */
+    });
+  }
+
+  private closeRecords(): void {
+    if (recordsEl.classList.contains("hidden")) return;
+    recordsEl.classList.add("hidden");
+    recordsContentEl.replaceChildren();
+    if (this.auto) this.scheduleAuto();
   }
 
   /** Award endings by the graph's own definitions (scene + dispatch
