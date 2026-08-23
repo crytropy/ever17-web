@@ -15,6 +15,7 @@
  * same rule as the rest of the converted content.
  */
 import { PERSISTENT_STATE_FORMAT, PERSISTENT_STATE_VERSION, type PersistentState } from "./persistence.js";
+import type { PresentationAction } from "./presentation.js";
 import { SAVE_FORMAT, SAVE_VERSION, type SessionSave } from "./save.js";
 
 export const PLAYER_DATA_FORMAT = "kid-player-data";
@@ -153,43 +154,91 @@ function isLayerState(v: unknown): boolean {
   );
 }
 
-/** Presentation deltas the VM replays when a saved moment is re-presented. */
-const ACTION_KINDS = new Set([
-  "setBackground",
-  "fillScreen",
-  "showSprite",
-  "hideSprite",
-  "spriteOrder",
-  "transitionTime",
-  "transitionSync",
-  "wait",
-  "effectOn",
-  "effectOff",
-  "shake",
-  "viewportRect",
-  "cgEffect",
-]);
-
-function isPresentationAction(v: unknown): boolean {
-  if (!isPlainObject(v)) return false;
+/**
+ * Presentation deltas the VM replays when a saved moment is re-presented.
+ *
+ * Exhaustive by construction: the switch below has a `never` assertion in its
+ * default, so adding a variant to PresentationAction without teaching this
+ * function about it is a compile error rather than a hole an import can walk
+ * through. Unknown *fields* are ignored - a file written by a newer build may
+ * carry more than this one reads - but a required field that is missing or of
+ * the wrong type rejects the whole document.
+ */
+function presentationActionProblem(v: unknown): string | null {
+  if (!isPlainObject(v)) return "an action is not an object";
   const kind = v["kind"];
-  if (typeof kind !== "string" || !ACTION_KINDS.has(kind)) return false;
-  // The two kinds that carry a layer are the ones the renderer dereferences;
-  // the rest are numbers the stage clamps for itself.
-  if (kind === "setBackground" || kind === "showSprite") {
-    if (!isLayerState(v["layer"])) return false;
+  if (typeof kind !== "string") return "an action has no kind";
+
+  /** `number | null`, required: absent is not the same as null. */
+  const num = (field: string): string | null =>
+    isNullOr(v[field], isFiniteNumber) ? null : `${kind}: ${field} must be a number or null`;
+  const numbers = (...fields: string[]): string | null => {
+    for (const f of fields) {
+      const bad = num(f);
+      if (bad) return bad;
+    }
+    return null;
+  };
+  const numberList = (field: string): string | null => {
+    const list = v[field];
+    if (!Array.isArray(list)) return `${kind}: ${field} must be a list`;
+    if (list.length > PLAYER_DATA_LIMITS.maxSprites) return `${kind}: ${field} is too long`;
+    return list.every((e) => isNullOr(e, isFiniteNumber)) ? null : `${kind}: ${field} holds a non-number`;
+  };
+  const layer = (): string | null => (isLayerState(v["layer"]) ? null : `${kind}: its layer is malformed`);
+
+  const k = kind as PresentationAction["kind"];
+  switch (k) {
+    case "setBackground": {
+      const bad = layer() ?? num("fade");
+      if (bad) return bad;
+      // optional, but must be a string when present
+      if (v["variant"] !== undefined && !isBoundedString(v["variant"], PLAYER_DATA_LIMITS.maxNameLength)) {
+        return "setBackground: variant must be a string";
+      }
+      return null;
+    }
+    case "fillScreen":
+      return numbers("color", "fade");
+    case "showSprite":
+      return layer() ?? num("mode");
+    case "hideSprite":
+      return numbers("slot", "mode");
+    case "spriteOrder":
+      return numberList("order");
+    case "transitionTime":
+      return numbers("frames", "mode");
+    case "transitionSync":
+      return null; // carries nothing
+    case "wait": {
+      const bad = num("amount");
+      if (bad) return bad;
+      return v["unit"] === "vm" || v["unit"] === "frames" ? null : 'wait: unit must be "vm" or "frames"';
+    }
+    case "effectOn":
+      return num("effect");
+    case "effectOff":
+      return num("category");
+    case "shake":
+      return numbers("mode", "amplitude");
+    case "viewportRect":
+      return numbers("x", "y", "w", "h", "frames");
+    case "cgEffect": {
+      if (!isNullOr(v["asset"], (x) => isBoundedString(x, PLAYER_DATA_LIMITS.maxNameLength))) {
+        return "cgEffect: asset must be a string or null";
+      }
+      if (!isNullOr(v["file"], (x) => isBoundedString(x, PLAYER_DATA_LIMITS.maxNameLength))) {
+        return "cgEffect: file must be a string or null";
+      }
+      return numberList("args");
+    }
+    default: {
+      // Compile error if a new PresentationAction variant is added above
+      // without a case here.
+      const exhaustive: never = k;
+      return `unknown action kind "${String(exhaustive)}"`;
+    }
   }
-  if (kind === "spriteOrder") {
-    const order = v["order"];
-    if (!Array.isArray(order) || order.length > PLAYER_DATA_LIMITS.maxSprites) return false;
-    if (!order.every((o) => isNullOr(o, isFiniteNumber))) return false;
-  }
-  if (kind === "cgEffect") {
-    const args = v["args"];
-    if (!Array.isArray(args) || args.length > PLAYER_DATA_LIMITS.maxSprites) return false;
-    if (!args.every((a) => isNullOr(a, isFiniteNumber))) return false;
-  }
-  return true;
 }
 
 /** The saved VM position and the screen it was presenting. */
@@ -221,7 +270,10 @@ function validateVmState(vm: unknown, where: string): string | null {
   if (actions !== undefined) {
     if (!Array.isArray(actions)) return `${where}: the save's presentation actions are malformed`;
     if (actions.length > PLAYER_DATA_LIMITS.maxActions) return `${where}: the save has too many presentation actions`;
-    if (!actions.every(isPresentationAction)) return `${where}: a presentation action in the save is malformed`;
+    for (const a of actions) {
+      const bad = presentationActionProblem(a);
+      if (bad) return `${where}: ${bad}`;
+    }
   }
   return null;
 }

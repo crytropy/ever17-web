@@ -125,9 +125,14 @@ Worth a quick check once per play session rather than once per line.
 - [ ] Auto speed (Fast / Normal / Slow) makes an audible difference
 - [ ] Skip mode is fast and stops when you turn it off
 - [ ] Backlog (`L` or `↑`) shows recent lines in order
+- [ ] `↑` again closes the backlog and returns to the story
 - [ ] `↓` advances the line, the same as a click or space
 - [ ] Clicking a backlog line returns to exactly that sentence
+- [ ] After a rewind the story continues correctly, including past a choice
+- [ ] A rewind does not replace the autosave
 - [ ] Lines from before a load are shown but are not clickable
+- [ ] Nothing advances behind Settings, save/load, a dialog or RECORDS
+- [ ] Sliders and dropdowns still respond to their own arrow keys
 - [ ] Save, then Load, returns to exactly the same line
 - [ ] Returning to the title and back does not lose a save
 - [ ] CONTINUE names the chapter you actually left off in

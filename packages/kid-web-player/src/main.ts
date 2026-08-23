@@ -42,6 +42,16 @@ import { LoadingIndicator } from "./loading-indicator.js";
 import { computeAutoAdvanceDelay } from "./auto-timing.js";
 import { renderRecordsInto } from "./records.js";
 import { AutoAdvanceTimer } from "./auto-timer.js";
+import {
+  RewindLog,
+  backlogOrdinal,
+  captureTimeline,
+  oldestBacklogOrdinal,
+  timelineFor,
+  type RewindPoint,
+} from "./rewind.js";
+import { routeKeyDown, routeKeyUp, type KeyAction, type Overlay } from "./keys.js";
+import { AutosaveGate } from "./autosave.js";
 import { matchEndings, type RouteGraphJson } from "kid-graph/model";
 
 declare global {
@@ -267,15 +277,15 @@ class WebPlayer {
   /** Active play-data generation: which saves, progress and records are live. */
   private scope: PlayDataScope;
   /**
-   * Where each recent line can be resumed from, keyed by the session's own
-   * line ordinal (GameSession.lines increments in lockstep with the backlog,
-   * so the key stays stable even as the backlog trims from the front).
-   *
-   * Saves are stored without their backlog copy: it is reconstructed from the
-   * live backlog on the way back, which keeps this O(lines) rather than
-   * O(lines x backlog).
+   * Where each recent line can be resumed from. Saves are stored without
+   * their backlog copy: it is rebuilt from the live backlog on the way back,
+   * which keeps this O(lines) rather than O(lines x backlog).
    */
-  private readonly rewindPoints = new Map<number, SessionSave>();
+  private readonly rewindPoints = new RewindLog();
+  /** Decides which scene entries deserve an autosave; armed before each session. */
+  private readonly autosaveGate = new AutosaveGate();
+  /** An autosave owed to a scene transition, taken once the line is on screen. */
+  private autosaveDue = false;
   /**
    * Owns the ordering between taking a backup and destroying what it backs
    * up. `inProgress` is what the reset checks before it advances anything.
@@ -337,40 +347,18 @@ class WebPlayer {
     window.vnAssetsBase = assetsBase;
     textboxEl.addEventListener("click", () => this.advance());
     document.addEventListener("keydown", (e) => {
-      // RECORDS is modal. Without this, keys still reached the game behind it
-      // - including T, which left the player looking at the title screen.
-      if (!recordsEl.classList.contains("hidden")) {
-        if (e.key === "Escape" || e.key === "r" || e.key === "R") this.closeRecords();
-        return;
-      }
-      // Arrows read the way a reader expects: up goes back through what was
-      // said, down goes on to the next line. Both are more discoverable than
-      // the letter keys, which stay as they were.
-      if (e.key === "ArrowUp") {
-        e.preventDefault();
-        this.openBacklog();
-      } else if (e.key === "ArrowDown") {
-        e.preventDefault();
-        if (backlogEl.classList.contains("hidden")) this.advance();
-        else this.closeBacklog(); // down from the log returns to the story
-      } else if (e.key === "Enter" || e.key === " ") this.advance();
-      else if (e.key === "a" || e.key === "A") this.toggleAuto();
-      else if (e.key === "l" || e.key === "L") this.toggleBacklog();
-      else if (e.key === "s" || e.key === "S") this.openMenu("save");
-      else if (e.key === "d" || e.key === "D") this.openMenu("load");
-      else if (e.key === "q" || e.key === "Q") void this.saveToSlot(QUICK_SLOT);
-      else if (e.key === "r" || e.key === "R") this.openRecords();
-      else if (e.key === "o" || e.key === "O") this.openSettings();
-      else if (e.key === "Escape") {
-        this.closeBacklog();
-        menuEl.classList.add("hidden");
-        settingsEl.classList.add("hidden");
-        (confirmEl.querySelector("#confirm-cancel") as HTMLElement | null)?.click();
-      } else if (e.key === "t" || e.key === "T") void this.returnToTitle();
-      else if (e.key === "Control") this.setSkip(true);
+      const target = e.target as HTMLElement | null;
+      const decision = routeKeyDown({
+        key: e.key,
+        targetTag: (target?.tagName ?? "").toLowerCase(),
+        targetEditable: target?.isContentEditable === true,
+        overlay: this.activeOverlay(),
+      });
+      if (decision.preventDefault) e.preventDefault();
+      this.runKeyAction(decision.action);
     });
     document.addEventListener("keyup", (e) => {
-      if (e.key === "Control") this.setSkip(false);
+      this.runKeyAction(routeKeyUp(e.key).action);
     });
     btn.auto.addEventListener("click", () => this.toggleAuto());
     btn.skip.addEventListener("click", () => this.setSkip(!this.skip, true));
@@ -601,6 +589,8 @@ class WebPlayer {
       // A new run inherits whatever earlier runs unlocked - that is what
       // makes later playthroughs different, and it is scenario state, not a
       // save file.
+      this.autosaveGate.begin("new");
+      this.autosaveDue = false;
       this.session = await GameSession.start(this.source, start, {
         ...this.sessionOptions(),
         initialVars: this.progress.seed(),
@@ -731,9 +721,14 @@ class WebPlayer {
    * parked on a waiter has to notice the swap, drop its stale event, and
    * carry on with the new session instead of deadlocking.
    */
-  private async resumeFrom(save: SessionSave, note: string): Promise<void> {
+  private async resumeFrom(save: SessionSave, note: string, timeline?: RewindPoint): Promise<void> {
     this.cancelAuto();
     this.audio.stopAll();
+    this.stopMovie();
+    // Media queued by the timeline being abandoned must not fire into the new
+    // one: a movie about to play would otherwise be counted as evidence for
+    // an ending the player just rewound away from.
+    this.pendingOps = [];
     // Park the current waiters aside: they are woken only after the session
     // is swapped, so the running loop() sees the change, drops its stale
     // event, and continues with the restored session (never deadlocks).
@@ -746,14 +741,24 @@ class WebPlayer {
     menuEl.classList.add("hidden");
     titleEl.classList.add("hidden");
     try {
+      // Reset before the session exists: restore() enters a scene from inside
+      // this call, so the counter has to already be at 0 when its own
+      // onSceneChange arrives - otherwise that entry is numbered as a real
+      // transition and the next real one gets suppressed in its place.
+      this.autosaveGate.begin("restore");
+      this.autosaveDue = false;
       this.session = await GameSession.restore(this.source, save, {
         ...this.sessionOptions(),
         // an older save must not roll global progression backwards
         restoreOverrides: this.progress.reconcile(save.vars),
       });
       this.rewindPoints.clear(); // the new session's own history starts here
-      this.moviesSinceChoice = [];
-      this.moviesPlayed = new Set();
+      // A rewind keeps the evidence the run had legitimately accumulated by
+      // that line and discards what came after. A save file carries no movie
+      // evidence at all, so loading one starts that record empty.
+      const restored = timelineFor(timeline);
+      this.moviesPlayed = restored.moviesPlayed;
+      this.moviesSinceChoice = restored.moviesSinceChoice;
       toast(note);
       wakeClick?.();
       wakeChoice?.(-1);
@@ -766,10 +771,13 @@ class WebPlayer {
   /** Shared by New Game and save restore - keeps hooks identical. */
   private sessionOptions(): Parameters<typeof GameSession.start>[2] {
     return {
-      onSceneChange: (scene, index) => {
+      onSceneChange: (scene) => {
+        // Seeing a chapter is monotonic: a rewind never unsees it.
         this.tracker?.scene(scene);
-        // autosave at every scene boundary after the first
-        if (index > 1) setTimeout(() => void this.saveToSlot(AUTO_SLOT), 50);
+        // Deferred rather than written here: restore() calls this from inside
+        // its own scene entry, where the VM has no presented event yet. The
+        // loop takes it once the next line is actually on screen.
+        if (this.autosaveGate.sceneEntered()) this.autosaveDue = true;
       },
       vm: {
         onOp: (op) => {
@@ -1062,6 +1070,59 @@ class WebPlayer {
     this.autoTimer.schedule(delayMs);
   }
 
+  /**
+   * Which surface owns the keyboard right now, most-modal first.
+   *
+   * A confirmation sits on top of whatever opened it, so it is checked before
+   * the settings panel and the save menu; the title screen is last because it
+   * is the resting state rather than something opened over the story.
+   */
+  private activeOverlay(): Overlay {
+    if (!confirmEl.classList.contains("hidden")) return "confirm";
+    if (!settingsEl.classList.contains("hidden")) return "settings";
+    if (!menuEl.classList.contains("hidden")) return "menu";
+    if (!recordsEl.classList.contains("hidden")) return "records";
+    if (!backlogEl.classList.contains("hidden")) return "backlog";
+    if (!titleEl.classList.contains("hidden")) return "title";
+    return "none";
+  }
+
+  /** Perform whatever the key router decided. */
+  private runKeyAction(action: KeyAction): void {
+    switch (action) {
+      case "none": return;
+      case "advance": this.advance(); return;
+      case "openBacklog": this.openBacklog(); return;
+      case "closeBacklog": this.closeBacklog(); return;
+      case "toggleBacklog": this.toggleBacklog(); return;
+      case "closeRecords": this.closeRecords(); return;
+      case "closeOverlay": this.closeTopOverlay(); return;
+      case "toggleAuto": this.toggleAuto(); return;
+      case "openSave": this.openMenu("save"); return;
+      case "openLoad": this.openMenu("load"); return;
+      case "quickSave": void this.saveToSlot(QUICK_SLOT); return;
+      case "openRecords": this.openRecords(); return;
+      case "openSettings": this.openSettings(); return;
+      case "returnToTitle": void this.returnToTitle(); return;
+      case "skipOn": this.setSkip(true); return;
+      case "skipOff": this.setSkip(false); return;
+    }
+  }
+
+  /** Escape from the surface that currently owns the keyboard. */
+  private closeTopOverlay(): void {
+    if (!confirmEl.classList.contains("hidden")) {
+      (confirmEl.querySelector("#confirm-cancel") as HTMLElement | null)?.click();
+      return;
+    }
+    if (!settingsEl.classList.contains("hidden")) {
+      (settingsEl.querySelector("#settings-close") as HTMLElement | null)?.click();
+      return;
+    }
+    if (!menuEl.classList.contains("hidden")) menuEl.classList.add("hidden");
+    if (this.auto) this.scheduleAuto();
+  }
+
   /** Any surface that should hold Auto rather than let it advance underneath. */
   private overlayOpen(): boolean {
     return [backlogEl, menuEl, settingsEl, confirmEl, titleEl].some((el) => !el.classList.contains("hidden"));
@@ -1089,18 +1150,21 @@ class WebPlayer {
     } catch {
       return; // nothing to snapshot yet
     }
-    // the backlog copy is rebuilt on the way back; keeping one per line would
-    // cost O(lines x backlog)
-    this.rewindPoints.set(session.lines - 1, { ...snap, backlog: [] });
-    const oldest = session.lines - session.backlog.length;
-    for (const key of this.rewindPoints.keys()) {
-      if (key < oldest) this.rewindPoints.delete(key);
-    }
+    this.rewindPoints.note(session.lines - 1, {
+      // the backlog copy is rebuilt on the way back; keeping one per line
+      // would cost O(lines x backlog)
+      save: { ...snap, backlog: [] },
+      // Host-side evidence, not VM state, and ending recognition reads it -
+      // so it has to travel with the moment or a rewind would credit the run
+      // with a different ending than uninterrupted play.
+      ...captureTimeline({ moviesPlayed: this.moviesPlayed, moviesSinceChoice: this.moviesSinceChoice }),
+    });
+    this.rewindPoints.trim(oldestBacklogOrdinal(session.lines, session.backlog.length));
   }
 
   /** Line ordinal of backlog entry `index` in the current session. */
   private backlogOrdinal(session: GameSession, index: number): number {
-    return session.lines - session.backlog.length + index;
+    return backlogOrdinal(session.lines, session.backlog.length, index);
   }
 
   /** Go back to a line the player picked out of the backlog. */
@@ -1109,16 +1173,16 @@ class WebPlayer {
     if (!session) return;
     const entry = session.backlog[index];
     if (!entry) return;
-    const snap = this.rewindPoints.get(this.backlogOrdinal(session, index));
-    if (!snap) {
+    const point = this.rewindPoints.get(this.backlogOrdinal(session, index));
+    if (!point) {
       // lines carried in from a loaded save have no VM state of their own
       toast("that line is from before this session was loaded");
       return;
     }
     // restore re-presents the saved line without re-logging it, so the log it
     // starts from must already contain that line
-    const save: SessionSave = { ...snap, backlog: session.backlog.slice(0, index + 1) };
-    await this.resumeFrom(save, `back to: ${this.chapterLabel(entry.scene)}`);
+    const save: SessionSave = { ...point.save, backlog: session.backlog.slice(0, index + 1) };
+    await this.resumeFrom(save, `back to: ${this.chapterLabel(entry.scene)}`, point);
   }
 
   private toggleBacklog(): void {
@@ -1197,6 +1261,18 @@ class WebPlayer {
     hudEl.textContent = s ? this.chapterLabel(s.scene) : "";
   }
 
+  /** Tear down a movie that is on screen, so an abandoned one cannot linger. */
+  private stopMovie(): void {
+    movieEl.onended = null;
+    movieEl.onclick = null;
+    try {
+      movieEl.pause();
+    } catch {
+      /* not playing */
+    }
+    movieEl.classList.add("hidden");
+  }
+
   private async playMovie(name: string): Promise<void> {
     const url = `${this.assetsBase}/movies/${name.toLowerCase()}.mp4`;
     const head = await fetch(url, { method: "HEAD" }).catch(() => null);
@@ -1269,10 +1345,18 @@ class WebPlayer {
         const session: GameSession | null = this.session;
         if (!session) return;
         const ev: SessionEvent = await session.next();
+        // A rewind may have landed while next() was in flight; its ops belong
+        // to a timeline that no longer exists.
+        if (this.session !== session) continue;
         await this.flushOps();
+        if (this.session !== session) continue;
         if (ev.type === "dialogue") {
           this.trackEvent(ev);
           this.noteRewindPoint(session);
+          if (this.autosaveDue) {
+            this.autosaveDue = false;
+            void this.saveToSlot(AUTO_SLOT);
+          }
           this.audio.setBgm(
             ev.state.bgm,
             ev.state.bgm ? `${this.assetsBase}/${this.assets.relative(ev.state.bgm) ?? ""}` : null,

@@ -322,11 +322,11 @@ describe("structural validation of a SessionSave", () => {
     ["an empty block", (s) => (vm(s)["block"] = ""), /names no block/],
     // actions
     ["actions that are not a list", (s) => (vm(s)["actions"] = "none"), /presentation actions are malformed/],
-    ["an action that is not an object", (s) => (vm(s)["actions"] = ["setBackground"]), /presentation action in the save is malformed/],
-    ["an action with an unknown kind", (s) => (vm(s)["actions"] = [{ kind: "selfDestruct" }]), /presentation action in the save is malformed/],
-    ["an action missing its layer", (s) => (vm(s)["actions"] = [{ kind: "showSprite", mode: 1 }]), /presentation action in the save is malformed/],
-    ["an action whose layer is malformed", (s) => (vm(s)["actions"] = [{ kind: "setBackground", layer: { asset: 1 }, fade: null }]), /presentation action in the save is malformed/],
-    ["a spriteOrder that is not a list", (s) => (vm(s)["actions"] = [{ kind: "spriteOrder", order: 3 }]), /presentation action in the save is malformed/],
+    ["an action that is not an object", (s) => (vm(s)["actions"] = ["setBackground"]), /an action is not an object/],
+    ["an action with an unknown kind", (s) => (vm(s)["actions"] = [{ kind: "selfDestruct" }]), /unknown action kind "selfDestruct"/],
+    ["an action missing its layer", (s) => (vm(s)["actions"] = [{ kind: "showSprite", mode: 1 }]), /showSprite: its layer is malformed/],
+    ["an action whose layer is malformed", (s) => (vm(s)["actions"] = [{ kind: "setBackground", layer: { asset: 1 }, fade: null }]), /setBackground: its layer is malformed/],
+    ["a spriteOrder that is not a list", (s) => (vm(s)["actions"] = [{ kind: "spriteOrder", order: 3 }]), /spriteOrder: order must be a list/],
     ["too many actions", (s) => (vm(s)["actions"] = Array.from({ length: 600 }, () => ({ kind: "transitionSync" }))), /too many presentation actions/],
     // counters
     ["counters missing entirely", (s) => delete s["counters"], /no counters/],
@@ -396,5 +396,122 @@ describe("file size limit", () => {
   it("refuses a size it cannot trust", () => {
     expect(playerDataSizeProblem(Number.NaN)).toMatch(/could not be determined/);
     expect(playerDataSizeProblem(-1)).toMatch(/could not be determined/);
+  });
+});
+
+describe("every PresentationAction kind", () => {
+  /**
+   * One valid and several invalid fixtures per variant. The validator is an
+   * exhaustive switch with a `never` default, so a new action kind is a
+   * compile error there; this table is what proves each existing kind is
+   * actually checked rather than merely named.
+   */
+  const LAYER = { asset: "bg01", file: "images/bg01.png", width: 800, height: 600, x: 0, slot: null };
+
+  const withActions = (actions: unknown[]) => {
+    const save = JSON.parse(JSON.stringify(fakeSave("op00", 3))) as Record<string, unknown>;
+    (save["vm"] as Record<string, unknown>)["actions"] = actions;
+    return {
+      format: PLAYER_DATA_FORMAT,
+      version: 1,
+      gameId: GAME,
+      exportedAt: new Date(0).toISOString(),
+      slots: [{ slot: "1", meta: { slot: "1", label: "x", savedAt: 1, scene: "op00", lines: 3 }, save }],
+    };
+  };
+
+  const VALID: Record<string, unknown> = {
+    setBackground: { kind: "setBackground", layer: LAYER, fade: 12 },
+    fillScreen: { kind: "fillScreen", color: 0, fade: null },
+    showSprite: { kind: "showSprite", layer: LAYER, mode: null },
+    hideSprite: { kind: "hideSprite", slot: 2, mode: null },
+    spriteOrder: { kind: "spriteOrder", order: [1, null, 3] },
+    transitionTime: { kind: "transitionTime", frames: 30, mode: null },
+    transitionSync: { kind: "transitionSync" },
+    wait: { kind: "wait", amount: 5, unit: "vm" },
+    effectOn: { kind: "effectOn", effect: 7 },
+    effectOff: { kind: "effectOff", category: null },
+    shake: { kind: "shake", mode: 1, amplitude: null },
+    viewportRect: { kind: "viewportRect", x: 0, y: 0, w: 800, h: 600, frames: null },
+    cgEffect: { kind: "cgEffect", asset: "cg01", file: null, args: [1, null] },
+  };
+
+  it("accepts a save carrying one of every action kind", () => {
+    expect(validatePlayerData(withActions(Object.values(VALID)), GAME)).toBeNull();
+  });
+
+  for (const [kind, action] of Object.entries(VALID)) {
+    it(`accepts a well-formed ${kind}`, () => {
+      expect(validatePlayerData(withActions([action]), GAME)).toBeNull();
+    });
+  }
+
+  it("accepts setBackground with its optional variant, and rejects a non-string one", () => {
+    expect(validatePlayerData(withActions([{ ...VALID.setBackground as object, variant: "b" }]), GAME)).toBeNull();
+    expect(validatePlayerData(withActions([{ ...VALID.setBackground as object, variant: 5 }]), GAME))
+      .toMatch(/setBackground: variant must be a string/);
+  });
+
+  it("ignores an unknown extra field rather than rejecting a readable file", () => {
+    // a file written by a newer build may carry more than this one reads
+    expect(validatePlayerData(withActions([{ ...VALID.transitionSync as object, futureField: 1 }]), GAME)).toBeNull();
+  });
+
+  const INVALID: [string, unknown, RegExp][] = [
+    // required number|null fields: absent, wrong type, and non-finite
+    ["setBackground missing fade", { kind: "setBackground", layer: LAYER }, /setBackground: fade must be a number or null/],
+    ["setBackground with a string fade", { kind: "setBackground", layer: LAYER, fade: "fast" }, /setBackground: fade/],
+    ["setBackground with a NaN fade", { kind: "setBackground", layer: LAYER, fade: Number.NaN }, /setBackground: fade/],
+    ["setBackground missing its layer", { kind: "setBackground", fade: null }, /setBackground: its layer is malformed/],
+    ["fillScreen missing color", { kind: "fillScreen", fade: null }, /fillScreen: color/],
+    ["fillScreen missing fade", { kind: "fillScreen", color: null }, /fillScreen: fade/],
+    ["showSprite missing mode", { kind: "showSprite", layer: LAYER }, /showSprite: mode/],
+    ["showSprite with a broken layer", { kind: "showSprite", layer: { asset: 1 }, mode: null }, /showSprite: its layer/],
+    ["hideSprite missing slot", { kind: "hideSprite", mode: null }, /hideSprite: slot/],
+    ["hideSprite missing mode", { kind: "hideSprite", slot: 1 }, /hideSprite: mode/],
+    ["spriteOrder missing order", { kind: "spriteOrder" }, /spriteOrder: order must be a list/],
+    ["spriteOrder holding a string", { kind: "spriteOrder", order: ["front"] }, /spriteOrder: order holds a non-number/],
+    ["spriteOrder that is too long", { kind: "spriteOrder", order: new Array(100).fill(1) }, /spriteOrder: order is too long/],
+    ["transitionTime missing frames", { kind: "transitionTime", mode: null }, /transitionTime: frames/],
+    ["transitionTime missing mode", { kind: "transitionTime", frames: 1 }, /transitionTime: mode/],
+    ["wait missing amount", { kind: "wait", unit: "vm" }, /wait: amount/],
+    ["wait missing unit", { kind: "wait", amount: 1 }, /wait: unit must be "vm" or "frames"/],
+    ["wait with an invented unit", { kind: "wait", amount: 1, unit: "seconds" }, /wait: unit must be "vm" or "frames"/],
+    ["wait with a null unit", { kind: "wait", amount: 1, unit: null }, /wait: unit must be "vm" or "frames"/],
+    ["effectOn missing effect", { kind: "effectOn" }, /effectOn: effect/],
+    ["effectOff missing category", { kind: "effectOff" }, /effectOff: category/],
+    ["shake missing mode", { kind: "shake", amplitude: 1 }, /shake: mode/],
+    ["shake missing amplitude", { kind: "shake", mode: 1 }, /shake: amplitude/],
+    ["viewportRect missing h", { kind: "viewportRect", x: 0, y: 0, w: 1, frames: null }, /viewportRect: h/],
+    ["viewportRect with an infinite x", { kind: "viewportRect", x: Infinity, y: 0, w: 1, h: 1, frames: null }, /viewportRect: x/],
+    ["cgEffect with a numeric asset", { kind: "cgEffect", asset: 5, file: null, args: [] }, /cgEffect: asset must be a string or null/],
+    ["cgEffect with a numeric file", { kind: "cgEffect", asset: null, file: 5, args: [] }, /cgEffect: file must be a string or null/],
+    ["cgEffect missing args", { kind: "cgEffect", asset: null, file: null }, /cgEffect: args must be a list/],
+    ["cgEffect with a string arg", { kind: "cgEffect", asset: null, file: null, args: ["x"] }, /cgEffect: args holds a non-number/],
+    ["an action with no kind at all", { layer: LAYER }, /an action has no kind/],
+    ["an action whose kind is a number", { kind: 7 }, /an action has no kind/],
+  ];
+
+  for (const [what, action, expected] of INVALID) {
+    it(`rejects ${what}`, () => {
+      expect(validatePlayerData(withActions([action]), GAME)).toMatch(expected);
+    });
+  }
+
+  it("writes zero keys for every malformed action", () => {
+    for (const [, action] of INVALID) {
+      const s = mockStorage();
+      const outcome = applyPlayerDataImport(ctx(s), withActions([action]));
+      expect(outcome.ok).toBe(false);
+      expect(s.map.size, "a rejected action must not touch storage").toBe(0);
+    }
+  });
+
+  it("rejects the whole document when one action among many is bad", () => {
+    const actions = [VALID.transitionSync, VALID.fillScreen, { kind: "wait", amount: 1, unit: "furlongs" }];
+    const s = mockStorage();
+    expect(validatePlayerData(withActions(actions), GAME)).toMatch(/wait: unit/);
+    expect(applyPlayerDataImport(ctx(s), withActions(actions)).ok).toBe(false);
+    expect(s.map.size).toBe(0);
   });
 });
