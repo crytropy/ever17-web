@@ -1606,7 +1606,10 @@ class WebPlayer {
     if (this.waits.enabled) {
       // Read from the console during QA; never surfaced in the game's UI.
       (window as unknown as { vnWaits: WaitRecorder }).vnWaits = this.waits;
-      console.info("[vn] wait diagnostics on - window.vnWaits.summary()");
+      // The stage's own view of itself: sprite slots, display-list children,
+      // operation-private temporaries, and the camera.
+      (window as unknown as { vnStage: () => unknown }).vnStage = () => this.stage?.probe() ?? null;
+      console.info("[vn] wait diagnostics on - window.vnWaits.summary(), window.vnStage()");
     }
     this.stage.onAssetError = (file) => this.noteAssetError(file);
     this.tracker = await CompletionTracker.open(new IdbCompletionStore(this.scope.completionDb)).catch(() => null);

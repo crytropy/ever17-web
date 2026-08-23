@@ -529,6 +529,22 @@ export class PixiStage {
    */
   private readonly transients = new Set<Sprite>();
 
+  /**
+   * A read-only look at what is currently on the stage.
+   *
+   * Diagnostics only, for QA: the pose ghost and the camera are exactly the
+   * things a browser check cannot otherwise see, and they are the two that
+   * used to survive a session they did not belong to.
+   */
+  probe(): { sprites: number; spriteLayerChildren: number; transients: number; camera: { scale: number; pivotX: number; pivotY: number } } {
+    return {
+      sprites: this.slots.size,
+      spriteLayerChildren: this.spriteLayer.children.length,
+      transients: this.transients.size,
+      camera: { scale: this.world.scale.x, pivotX: this.world.pivot.x, pivotY: this.world.pivot.y },
+    };
+  }
+
   /** Destroy every operation-private display object still hanging around. */
   private dropTransients(): void {
     for (const sprite of [...this.transients]) {
