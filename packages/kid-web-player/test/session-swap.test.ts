@@ -4,6 +4,7 @@ import type { AssetIndex, IrBlock, IrScene, SessionSave } from "kid-contracts";
 import { SessionSwap } from "../src/session-swap.js";
 import { RewindLog, timelineFor, type RewindPoint } from "../src/rewind.js";
 import { AutosaveGate } from "../src/autosave.js";
+import { AssetLoader } from "kid-renderer-pixi";
 
 /**
  * These drive the same controller WebPlayer.resumeFrom drives, with real
@@ -398,5 +399,69 @@ describe("the autosave across a rewind", () => {
     // and a genuine later transition still does
     expect(p.state.ctxGate.sceneEntered(), "a genuine later transition").toBe(true);
     expect(JSON.stringify([...map.entries()])).toBe(before);
+  });
+});
+
+describe("a session abandoned while an asset is still cold", () => {
+  /**
+   * The stall in the round: skip stopped for over twenty seconds and manual
+   * advance did nothing, because the loop was parked on a texture load that
+   * neither skip() nor a session change could interrupt. The replacement
+   * session must not inherit that wait.
+   */
+  const coldLoader = () => {
+    const settlers = new Map<string, (v: string) => void>();
+    const loader = new AssetLoader<string>({
+      load: (url) => new Promise<string>((resolve) => settlers.set(url, resolve)),
+    });
+    return { loader, settle: (url: string) => settlers.get(url)?.("tex"), outstanding: () => settlers.size };
+  };
+
+  it("lets a New Game run immediately, without waiting for the abandoned load", async () => {
+    const { loader, settle, outstanding } = coldLoader();
+    const p = player();
+    const original = await GameSession.start(SOURCE, "a");
+    p.swap.set(original);
+
+    // the original session is parked on a conversion that has not answered
+    const cold = loader.get("bg01.png", "/assets/bg01.png");
+    await Promise.resolve();
+    expect(loader.pending).toBe(1);
+
+    // returning to the title abandons it
+    loader.cancel();
+    p.swap.set(null);
+    await expect(cold, "the parked wait is released").resolves.toBeNull();
+    expect(loader.pending).toBe(0);
+
+    // New Game, and its own assets load on their own epoch
+    const fresh = await GameSession.start(SOURCE, "a");
+    p.swap.set(fresh);
+    const next = loader.get("bg02.png", "/assets/bg02.png");
+    await Promise.resolve();
+    settle("/assets/bg02.png");
+    await expect(next).resolves.toBe("tex");
+    expect((await fresh.next() as { text: string }).text, "the new session plays at once").toBe("one");
+    // the abandoned conversion is still outstanding and harmless
+    expect(outstanding()).toBe(2);
+    expect(loader.failed, "abandoning is not failing").toEqual([]);
+  });
+
+  it("does not let the abandoned load paint into the replacement", async () => {
+    const { loader, settle } = coldLoader();
+    const staleEpoch = loader.epoch;
+    const cold = loader.get("old.png", "/old.png");
+    await Promise.resolve();
+
+    loader.cancel(); // session swap
+    await cold;
+    expect(loader.stale(staleEpoch), "the old picture's epoch has passed").toBe(true);
+
+    // the abandoned conversion finally answers
+    settle("/old.png");
+    await new Promise((r) => setTimeout(r, 0));
+    // and contributes nothing to the current picture
+    expect(loader.pending).toBe(0);
+    expect(loader.failed).toEqual([]);
   });
 });

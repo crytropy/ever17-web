@@ -54,6 +54,7 @@ import { routeKeyDown, routeKeyUp, type KeyAction, type Overlay } from "./keys.j
 import { AutosaveGate } from "./autosave.js";
 import { MoviePlayer } from "./movie.js";
 import { SessionSwap } from "./session-swap.js";
+import { WaitRecorder, diagnosticsEnabled } from "./waits.js";
 import { matchEndings, type RouteGraphJson } from "kid-graph/model";
 
 /** A queued media operation, drained once the next line is presented. */
@@ -363,12 +364,19 @@ class WebPlayer {
   /** Debounced indicator, so cached assets never flash it. */
   private readonly loading = new LoadingIndicator(
     () => {
-      loadingTextEl.textContent = "converting artwork…";
+      loadingTextEl.textContent = this.loadingLabel();
       loadingEl.classList.remove("hidden");
     },
     () => loadingEl.classList.add("hidden"),
     LOADING_INDICATOR_DELAY_MS,
   );
+  /** Progress through the assets of the event being drawn, when known. */
+  private assetProgress: { done: number; total: number } | null = null;
+  /**
+   * Timing for the waits a player can feel. Armed only for a QA profile or an
+   * explicit ?diag, and read from the console as `window.vnWaits`.
+   */
+  private readonly waits: WaitRecorder;
   /** Assets whose conversion failed, shown in the error banner. */
   private assetErrors = new Set<string>();
   /** Set when another tab started fresh: this tab must stop writing. */
@@ -388,6 +396,7 @@ class WebPlayer {
     // Settings live at the namespace; everything gameplay owns lives under
     // the active play-data generation, so "start completely fresh" is one
     // pointer move rather than a pile of deletes.
+    this.waits = new WaitRecorder(diagnosticsEnabled(this.ns, location.search));
     this.scope = readActiveScope(localStorage, this.ns);
     this.slots = new SaveSlots(localStorage, this.scope.storagePrefix);
     this.config = loadConfig(localStorage, this.ns);
@@ -572,6 +581,9 @@ class WebPlayer {
   private endSession(): void {
     this.cancelAuto();
     this.audio.stopAll();
+    // Release the loop before anything else: it may be parked on a cold
+    // asset, and stage.reset() only runs after this returns.
+    this.stage?.cancelApply();
     this.swap.set(null);
     this.skip = false;
     btn.skip.classList.remove("on");
@@ -799,6 +811,9 @@ class WebPlayer {
         release: () => {
           this.cancelAuto();
           this.audio.stopAll();
+          // Abandon the picture the outgoing session was still building, so
+          // the replacement never waits out a cold asset nobody wants.
+          this.stage?.cancelApply();
           // Resolves whatever the loop is awaiting rather than orphaning it.
           this.movies.stop();
           this.ctx = next;
@@ -1203,6 +1218,19 @@ class WebPlayer {
     if (this.auto) this.scheduleAuto();
   }
 
+  /**
+   * What the loading indicator says.
+   *
+   * Names a count, never a file: how far through this event's artwork the
+   * conversion is, so a long wait reads as progress rather than a hang. The
+   * archive paths behind it stay in the diagnostics log.
+   */
+  private loadingLabel(): string {
+    const p = this.assetProgress;
+    if (!p || p.total <= 1) return "preparing artwork…";
+    return `preparing artwork ${Math.min(p.done + 1, p.total)} / ${p.total}`;
+  }
+
   /** Any surface that should hold Auto rather than let it advance underneath. */
   private overlayOpen(): boolean {
     return [backlogEl, menuEl, settingsEl, confirmEl, titleEl].some((el) => !el.classList.contains("hidden"));
@@ -1368,6 +1396,7 @@ class WebPlayer {
    * recorded as seen.
    */
   private async flushOps(session: GameSession): Promise<void> {
+    if (this.ctx.ops.length === 0) return;
     const ops = this.ctx.ops;
     this.ctx.ops = [];
     for (const op of ops) {
@@ -1384,7 +1413,9 @@ class WebPlayer {
       } else if (op.op === "playMovie" && op.asset) {
         this.moviesSinceChoice.push(op.asset.toLowerCase());
         this.moviesPlayed.add(op.asset.toLowerCase());
-        await this.playMovie(op.asset);
+        await this.waits.time("movie", { file: op.asset, scene: session.scene }, () =>
+          this.playMovie(op.asset!),
+        );
         if (this.session !== session) return;
       }
       if (op.asset) this.tracker?.asset(op.asset);
@@ -1411,7 +1442,9 @@ class WebPlayer {
       for (;;) {
         const session: GameSession | null = this.session;
         if (!session) return;
-        const ev: SessionEvent = await session.next();
+        const ev: SessionEvent = await this.waits.time("session.next", { scene: session.scene }, () =>
+          session.next(),
+        );
         // A rewind may have landed while next() was in flight; its ops belong
         // to a timeline that no longer exists.
         if (this.session !== session) continue;
@@ -1429,10 +1462,12 @@ class WebPlayer {
             ev.state.bgm ? `${this.assetsBase}/${this.assets.relative(ev.state.bgm) ?? ""}` : null,
           );
           // play the transition script, then show the line
-          await this.stage?.apply(ev.state, ev.actions, (f) => `${this.assetsBase}/${f}`, {
-            instant: this.skip || this.config.transitionSpeed === 0,
-            speed: this.config.transitionSpeed || 1,
-          });
+          await this.waits.time("stage.apply", { scene: session.scene, block: ev.state.block }, () =>
+            this.stage?.apply(ev.state, ev.actions, (f) => `${this.assetsBase}/${f}`, {
+              instant: this.skip || this.config.transitionSpeed === 0,
+              speed: this.config.transitionSpeed || 1,
+            }) ?? Promise.resolve(),
+          );
           if (this.session !== session) continue; // a load replaced the session
           speakerEl.textContent = ev.speaker ?? "";
           textEl.textContent = ev.text;
@@ -1530,7 +1565,19 @@ class WebPlayer {
     this.assets = new WebAssets(manifest);
     this.source = new WebSceneSource(this.assets);
     this.stage = await PixiStage.create(pixiParent, this.meta.profile);
-    this.stage.onAssetActivity = (pending) => this.loading.update(pending);
+    this.stage.onAssetActivity = (pending, progress) => {
+      this.assetProgress = progress ?? null;
+      // Keep the label live while the indicator is already up, so a long
+      // conversion counts up instead of sitting on one frozen message.
+      if (this.loading.visible) loadingTextEl.textContent = this.loadingLabel();
+      this.loading.update(pending);
+    };
+    this.stage.onWait = (record) => this.waits.note(record);
+    if (this.waits.enabled) {
+      // Read from the console during QA; never surfaced in the game's UI.
+      (window as unknown as { vnWaits: WaitRecorder }).vnWaits = this.waits;
+      console.info("[vn] wait diagnostics on - window.vnWaits.summary()");
+    }
     this.stage.onAssetError = (file) => this.noteAssetError(file);
     this.tracker = await CompletionTracker.open(new IdbCompletionStore(this.scope.completionDb)).catch(() => null);
     this.catalog = await fetch("narrative.json")

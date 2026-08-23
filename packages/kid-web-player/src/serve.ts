@@ -147,6 +147,11 @@ export function serve(opts: ServeOptions): void {
     return graphJson;
   };
 
+  /** Conversions taking at least this long are worth a line in the log. */
+  const SLOW_CONVERSION_MS = 250;
+  /** Conversions running right now, so the log shows whether they overlap. */
+  let inFlight = 0;
+
   const server = createServer((req, res) => {
     const url = (req.url ?? "/").split("?")[0]!;
 
@@ -295,14 +300,27 @@ export function serve(opts: ServeOptions): void {
     // Failures answer with a readable 5xx rather than leaving the request (and
     // the player) hanging - the client retries or reports it.
     if (assetRel && opts.materializeAsset) {
+      // Timed and logged: a conversion slow enough for the player to feel is
+      // the thing that used to be invisible from the browser side.
+      const startedAt = Date.now();
+      inFlight += 1;
+      const finish = (): number => {
+        inFlight -= 1;
+        return Date.now() - startedAt;
+      };
       Promise.resolve(opts.materializeAsset(assetRel)).then(
         (produced) => {
+          const ms = finish();
+          if (ms >= SLOW_CONVERSION_MS) {
+            console.log(`converted ${assetRel} in ${ms}ms (${inFlight} other conversion(s) in flight)`);
+          }
           if (produced && existsSync(produced) && statSync(produced).isFile()) respondFile(produced);
           else missing();
         },
         (err: Error) => {
+          const ms = finish();
           const detail = err.message || String(err);
-          console.error(`asset conversion failed: ${detail}`);
+          console.error(`asset conversion failed after ${ms}ms: ${detail}`);
           res.writeHead(503, { "content-type": "text/plain", "cache-control": "no-store" });
           res.end(`asset conversion failed for ${assetRel}: ${detail}`);
         },

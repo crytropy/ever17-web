@@ -11,6 +11,8 @@
  * mapped visual is an approximation of the original engine's behaviour.
  */
 import { Application, Container, Graphics, Sprite, Texture, Assets } from "pixi.js";
+import { AssetLoader, type AssetProgress, type WaitRecord } from "./asset-loader.js";
+
 import {
   DEFAULT_GAME_PROFILE,
   type EffectClear,
@@ -108,19 +110,33 @@ export class PixiStage {
    * freeze the story mid-line with no explanation; failing lets the scene
    * continue without that layer and lets the host offer a retry.
    */
-  assetTimeoutMs = 10_000;
-  /** Notified as texture loads start and finish (pending count). */
-  onAssetActivity: ((pending: number) => void) | null = null;
-  /** Notified when a texture could not be loaded at all. */
-  onAssetError: ((file: string, error: unknown) => void) | null = null;
-  private pending = 0;
-  private failedFiles = new Set<string>();
+  /** Loading, cancellation and failure policy for textures. */
+  private readonly loader = new AssetLoader<Texture>({ load: (url) => Assets.load(url) as Promise<Texture> });
+
+  /** How long one texture load may take before it is treated as failed. */
+  get assetTimeoutMs(): number {
+    return this.loader.timeoutMs;
+  }
+  set assetTimeoutMs(ms: number) {
+    this.loader.timeoutMs = ms;
+  }
   /**
-   * Per-file retry counter, appended to the URL when reloading after a
-   * failure. Loaders cache by URL (and may cache the rejection), so a retry
-   * asks for a genuinely new URL instead of relying on cache eviction.
+   * Notified as texture loads start and finish. `progress` is present while a
+   * batch of assets for one event is warming, so the host can say
+   * "preparing artwork 2 / 4" rather than show an untimed spinner.
    */
-  private retryCount = new Map<string, number>();
+  set onAssetActivity(fn: ((pending: number, progress?: AssetProgress) => void) | null) {
+    this.loader.onActivity = fn;
+  }
+  /** Notified when a texture could not be loaded at all. */
+  set onAssetError(fn: ((file: string, error: unknown) => void) | null) {
+    this.loader.onError = fn;
+  }
+  /** Structured timing for diagnostics. Off unless a host attaches to it. */
+  set onWait(fn: ((record: WaitRecord) => void) | null) {
+    this.loader.onWait = fn;
+  }
+
   /** Last picture applied, so failed assets can be retried into place. */
   private lastState: StageState | null = null;
   private lastResolveUrl: ((file: string) => string) | null = null;
@@ -211,6 +227,9 @@ export class PixiStage {
 
   /** Clear everything - fresh stage (used between shot fixtures). */
   reset(): void {
+    // Abandon any picture still being built: without this, returning to the
+    // title while an asset was converting left the old loop waiting on it.
+    this.cancelApply();
     this.skip();
     this.clearSprites(true);
     this.bgA.visible = this.bgB.visible = false;
@@ -284,38 +303,42 @@ export class PixiStage {
    */
   private async texture(file: string | null, resolveUrl: (f: string) => string): Promise<Texture | null> {
     if (!file) return null;
-    const attempt = this.retryCount.get(file) ?? 0;
-    const base = resolveUrl(file);
-    const url = attempt === 0 ? base : `${base}${base.includes("?") ? "&" : "?"}retry=${attempt}`;
-    this.pending += 1;
-    this.onAssetActivity?.(this.pending);
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      const tex = (await Promise.race([
-        Assets.load(url),
-        new Promise<never>((_resolve, reject) => {
-          timer = setTimeout(
-            () => reject(new Error(`load timed out after ${this.assetTimeoutMs}ms`)),
-            this.assetTimeoutMs,
-          );
-        }),
-      ])) as Texture;
-      this.failedFiles.delete(file);
-      return tex;
-    } catch (err) {
-      this.failedFiles.add(file);
-      this.onAssetError?.(file, err);
-      return null;
-    } finally {
-      if (timer !== undefined) clearTimeout(timer);
-      this.pending -= 1;
-      this.onAssetActivity?.(this.pending);
+    return this.loader.get(file, resolveUrl(file));
+  }
+
+  /**
+   * Abandon the picture in progress.
+   *
+   * The player calls this when what is being built no longer belongs to
+   * anything: returning to the title, loading a slot, rewinding, or starting
+   * a new game. Without it a session swap had to wait out however long a cold
+   * asset took, because `skip()` only finishes tweens and authored waits -
+   * nothing could interrupt a texture load.
+   */
+  cancelApply(): void {
+    this.loader.cancel();
+  }
+
+  /** Warm everything one event needs, concurrently. */
+  private async prefetch(files: string[], resolveUrl: (f: string) => string): Promise<void> {
+    await this.loader.warm(files.filter(Boolean).map((file) => ({ file, base: resolveUrl(file) })));
+  }
+
+  /** Files an event's actions and target state will ask for. */
+  private assetsOf(state: StageState, actions: StageAction[]): string[] {
+    const files: (string | null | undefined)[] = [];
+    for (const a of actions) {
+      if (a.kind === "setBackground" || a.kind === "showSprite") files.push(a.layer.file);
+      else if (a.kind === "cgEffect") files.push(a.file);
     }
+    files.push(state.background?.file);
+    for (const sp of state.sprites) files.push(sp.file);
+    return files.filter((f): f is string => Boolean(f));
   }
 
   /** Files whose most recent load attempt failed. */
   get failed(): string[] {
-    return [...this.failedFiles];
+    return this.loader.failed;
   }
 
   /**
@@ -324,16 +347,16 @@ export class PixiStage {
    * Resolves true when nothing is failing any more.
    */
   async retryFailed(): Promise<boolean> {
-    const files = [...this.failedFiles];
+    const files = this.loader.failed;
     if (files.length === 0) return true;
-    this.failedFiles.clear();
+    this.loader.clearFailed();
     // Bumping the counter is enough: the reload below asks for a URL the
     // loader has never seen, so no cache eviction is needed (and asking for
     // one it never cached only produces a warning).
-    for (const f of files) this.retryCount.set(f, (this.retryCount.get(f) ?? 0) + 1);
+    this.loader.retry(files);
     const resolveUrl = this.lastResolveUrl;
     if (this.lastState && resolveUrl) await this.settleToState(this.lastState, resolveUrl);
-    return this.failedFiles.size === 0;
+    return this.loader.failed.length === 0;
   }
 
   // ---------------------------------------------------------------- apply
@@ -351,8 +374,24 @@ export class PixiStage {
     const speed = opts.speed ?? 1;
     this.lastState = state;
     this.lastResolveUrl = resolveUrl;
+    const epoch = this.loader.epoch;
+    const started = Date.now();
+
+    // Warm everything this event needs together, then play the authored
+    // sequence against a populated cache.
+    await this.prefetch(this.assetsOf(state, actions), resolveUrl);
+    if (this.loader.stale(epoch)) {
+      this.loader.onWait?.({ kind: "apply", outcome: "cancelled", ms: Date.now() - started, pending: this.loader.pending, epoch });
+      return;
+    }
 
     for (const a of actions) {
+      // An abandoned apply must not keep showing and hiding layers in a
+      // session that has already replaced it.
+      if (this.loader.stale(epoch)) {
+        this.loader.onWait?.({ kind: "apply", outcome: "cancelled", ms: Date.now() - started, pending: this.loader.pending, epoch });
+        return;
+      }
       switch (a.kind) {
         case "transitionTime":
           this.pendingFrames = a.frames;
@@ -474,7 +513,18 @@ export class PixiStage {
 
     // settle on the target state (covers anything the delta missed, e.g.
     // resuming from a save where actions describe only the final moment)
+    if (this.loader.stale(epoch)) {
+      this.loader.onWait?.({ kind: "apply", outcome: "cancelled", ms: Date.now() - started, pending: this.loader.pending, epoch });
+      return;
+    }
     await this.settleToState(state, resolveUrl);
+    this.loader.onWait?.({
+      kind: "apply",
+      outcome: this.loader.stale(epoch) ? "cancelled" : "ok",
+      ms: Date.now() - started,
+      pending: this.loader.pending,
+      epoch,
+    });
   }
 
   private async setBackground(
@@ -671,9 +721,14 @@ export class PixiStage {
   async settleToState(state: StageState, resolveUrl: (f: string) => string): Promise<void> {
     this.lastState = state;
     this.lastResolveUrl = resolveUrl;
+    const epoch = this.loader.epoch;
+    // Warm the whole picture at once rather than a layer at a time.
+    await this.prefetch(this.assetsOf(state, []), resolveUrl);
+    if (this.loader.stale(epoch)) return;
     // background
     if (state.background?.file) {
       const tex = await this.texture(state.background.file, resolveUrl);
+      if (this.loader.stale(epoch)) return;
       if (tex && this.bgA.texture !== tex) {
         this.bgA.texture = tex;
         this.bgA.y = Math.max(0, this.h - tex.height);
@@ -700,6 +755,7 @@ export class PixiStage {
     }
     for (const [slot, layer] of want) {
       const tex = await this.texture(layer.file, resolveUrl);
+      if (this.loader.stale(epoch)) return;
       if (!tex) continue;
       let sp = this.slots.get(slot);
       if (!sp) {
