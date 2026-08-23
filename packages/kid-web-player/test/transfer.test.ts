@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   PLAYER_DATA_FORMAT,
+  PLAYER_DATA_LIMITS,
+  playerDataSizeProblem,
   SAVE_FORMAT,
   SAVE_VERSION,
   summarizePlayerData,
@@ -82,11 +84,14 @@ describe("export", () => {
     expect(validatePlayerData(doc, GAME)).toBeNull();
   });
 
-  it("carries no game content, only the player's own data", () => {
+  it("embeds no converted assets - it references them by name", () => {
     const s = mockStorage();
     new SaveSlots(s, NS).put("1", fakeSave("t_1a", 100));
     const text = JSON.stringify(buildPlayerDataExport(ctx(s), null));
-    // a save references scenes by name; it must not embed story text or assets
+    // Note the narrow claim. An export is NOT free of game content: a save
+    // carries its backlog, so the file holds recently read story text, and
+    // slot metadata may carry a thumbnail. What it must never do is embed a
+    // converted image, audio or movie file.
     expect(text).not.toMatch(/\.png|\.wav|\.mp4/);
   });
 });
@@ -211,9 +216,9 @@ describe("deep validation of an imported file", () => {
     ["a save from a future version", (d) => ((d.slots[0]!.save as { version: number }).version = 99), /unsupported save version/],
     ["a save with no VM state", (d) => delete (d.slots[0]!.save as { vm?: unknown }).vm, /no VM state/],
     ["a save naming no scene", (d) => ((d.slots[0]!.save.vm as { scene: unknown }).scene = 42), /names no scene/],
-    ["a save with a bad position", (d) => ((d.slots[0]!.save.vm as { pc: unknown }).pc = "x"), /no position/],
+    ["a save with a bad position", (d) => ((d.slots[0]!.save.vm as { pc: unknown }).pc = "x"), /position is not a whole number/],
     ["variables that are not numbers", (d) => ((d.slots[0]!.save as { vars: unknown }).vars = [["a", 1]]), /variables are malformed/],
-    ["a route that is not names", (d) => ((d.slots[0]!.save as { route: unknown }).route = [{}]), /route is malformed/],
+    ["a route that is not names", (d) => ((d.slots[0]!.save as { route: unknown }).route = [{}]), /route names something that is not a scene/],
     ["a backlog that is not a list", (d) => ((d.slots[0]!.save as { backlog: unknown }).backlog = "no"), /backlog is malformed/],
     ["an unnamed slot", (d) => ((d.slots[0] as { slot: unknown }).slot = 7), /no usable name/],
     ["a duplicated slot", (d) => d.slots.push({ ...d.slots[0]! }), /twice/],
@@ -258,5 +263,138 @@ describe("deep validation of an imported file", () => {
       expect(outcome.ok).toBe(false);
       expect(s.map.size, "a rejected file must not touch storage").toBe(0);
     }
+  });
+});
+
+describe("structural validation of a SessionSave", () => {
+  /**
+   * Anything accepted here is written to storage and later handed to
+   * GameSession.restore, so the bar is "the runtime can actually load this",
+   * not "it looks roughly like a save". Each case damages one field of an
+   * otherwise valid document.
+   */
+  const doc = (mutate: (save: Record<string, unknown>) => void) => {
+    const save = JSON.parse(JSON.stringify(fakeSave("op00", 3))) as Record<string, unknown>;
+    // a realistic presentation state, so the sprite cases have something to break
+    (save["vm"] as Record<string, unknown>)["presentation"] = {
+      background: { asset: "bg01", file: "images/bg01.png", width: 800, height: 600, x: 0, slot: null },
+      sprites: [[1, { asset: "ch01", file: "images/ch01.png", width: 200, height: 400, x: 10, slot: 1 }]],
+      bgm: "bgm01",
+      fill: null,
+    };
+    mutate(save);
+    return {
+      format: PLAYER_DATA_FORMAT,
+      version: 1,
+      gameId: GAME,
+      exportedAt: new Date(0).toISOString(),
+      slots: [{ slot: "1", meta: { slot: "1", label: "序章", savedAt: 1, scene: "op00", lines: 3 }, save }],
+    };
+  };
+  const vm = (s: Record<string, unknown>) => s["vm"] as Record<string, unknown>;
+  const pres = (s: Record<string, unknown>) => vm(s)["presentation"] as Record<string, unknown>;
+
+  it("accepts a save carrying a full presentation state", () => {
+    expect(validatePlayerData(doc(() => {}), GAME)).toBeNull();
+  });
+
+  const cases: [string, (s: Record<string, unknown>) => void, RegExp][] = [
+    // presentation
+    ["sprites missing entirely", (s) => delete pres(s)["sprites"], /no sprite list/],
+    ["sprites that are not a list", (s) => (pres(s)["sprites"] = {}), /no sprite list/],
+    ["a sprite that is a bare layer, not a pair", (s) => (pres(s)["sprites"] = [{ asset: "ch01" }]), /not a \[slot, layer\] pair/],
+    ["a sprite pair of the wrong length", (s) => (pres(s)["sprites"] = [[1]]), /not a \[slot, layer\] pair/],
+    ["a sprite slot that is not a number", (s) => (pres(s)["sprites"] = [["front", { asset: "a", file: null, width: null, height: null, x: null, slot: null }]]), /has no slot/],
+    ["a sprite layer missing its asset", (s) => (pres(s)["sprites"] = [[1, { file: null, width: null, height: null, x: null, slot: null }]]), /layer is malformed/],
+    ["a sprite layer with a non-numeric width", (s) => (pres(s)["sprites"] = [[1, { asset: "a", file: null, width: "wide", height: null, x: null, slot: null }]]), /layer is malformed/],
+    ["too many sprites", (s) => (pres(s)["sprites"] = Array.from({ length: 100 }, () => [1, { asset: "a", file: null, width: null, height: null, x: null, slot: null }])), /too many sprites/],
+    ["a background of the wrong shape", (s) => (pres(s)["background"] = { asset: 5 }), /background is malformed/],
+    ["a background that is absent rather than null", (s) => delete pres(s)["background"], /background is malformed/],
+    ["bgm that is not a string", (s) => (pres(s)["bgm"] = 7), /music track is malformed/],
+    ["a fill that is not finite", (s) => (pres(s)["fill"] = Number.NaN), /screen fill is malformed/],
+    ["presentation missing entirely", (s) => delete vm(s)["presentation"], /no presentation state/],
+    // position
+    ["a negative position", (s) => (vm(s)["pc"] = -1), /position is not a whole number/],
+    ["a fractional position", (s) => (vm(s)["pc"] = 1.5), /position is not a whole number/],
+    ["a negative step count", (s) => (vm(s)["steps"] = -3), /step count is not a whole number/],
+    ["a missing step count", (s) => delete vm(s)["steps"], /step count is not a whole number/],
+    ["a missing block", (s) => delete vm(s)["block"], /names no block/],
+    ["an empty block", (s) => (vm(s)["block"] = ""), /names no block/],
+    // actions
+    ["actions that are not a list", (s) => (vm(s)["actions"] = "none"), /presentation actions are malformed/],
+    ["an action that is not an object", (s) => (vm(s)["actions"] = ["setBackground"]), /presentation action in the save is malformed/],
+    ["an action with an unknown kind", (s) => (vm(s)["actions"] = [{ kind: "selfDestruct" }]), /presentation action in the save is malformed/],
+    ["an action missing its layer", (s) => (vm(s)["actions"] = [{ kind: "showSprite", mode: 1 }]), /presentation action in the save is malformed/],
+    ["an action whose layer is malformed", (s) => (vm(s)["actions"] = [{ kind: "setBackground", layer: { asset: 1 }, fade: null }]), /presentation action in the save is malformed/],
+    ["a spriteOrder that is not a list", (s) => (vm(s)["actions"] = [{ kind: "spriteOrder", order: 3 }]), /presentation action in the save is malformed/],
+    ["too many actions", (s) => (vm(s)["actions"] = Array.from({ length: 600 }, () => ({ kind: "transitionSync" }))), /too many presentation actions/],
+    // counters
+    ["counters missing entirely", (s) => delete s["counters"], /no counters/],
+    ["a line count that is not a number", (s) => (s["counters"] = { lines: "many", scenes: 1 }), /line count is malformed/],
+    ["a negative line count", (s) => (s["counters"] = { lines: -1, scenes: 1 }), /line count is malformed/],
+    ["a fractional scene count", (s) => (s["counters"] = { lines: 1, scenes: 2.5 }), /scene count is malformed/],
+    ["a missing scene count", (s) => (s["counters"] = { lines: 1 }), /scene count is malformed/],
+    // vars
+    ["a variable id that is not an integer", (s) => (s["vars"] = [[1.5, 1]]), /variables are malformed/],
+    ["a variable value that is not finite", (s) => (s["vars"] = [[1039, Number.POSITIVE_INFINITY]]), /variables are malformed/],
+    ["system variables that are not pairs", (s) => (s["sysVars"] = [[1]]), /system variables are malformed/],
+    // route
+    ["a route that is not a list", (s) => (s["route"] = "op00"), /route is malformed/],
+    ["a route holding an empty name", (s) => (s["route"] = ["op00", ""]), /route names something that is not a scene/],
+    ["an oversized route", (s) => (s["route"] = Array.from({ length: 6000 }, () => "op00")), /route is too long/],
+    // backlog
+    ["a backlog entry naming no scene", (s) => (s["backlog"] = [{ text: "hello" }]), /backlog entry names no scene/],
+    ["a backlog entry with no text", (s) => (s["backlog"] = [{ scene: "op00" }]), /text is malformed or too long/],
+    ["a backlog entry with oversized text", (s) => (s["backlog"] = [{ scene: "op00", text: "x".repeat(5000) }]), /text is malformed or too long/],
+    ["a backlog speaker that is not a string", (s) => (s["backlog"] = [{ scene: "op00", text: "hi", speaker: 5 }]), /speaker is malformed/],
+    ["a backlog voice file that is not a string", (s) => (s["backlog"] = [{ scene: "op00", text: "hi", voiceFile: {} }]), /voice file is malformed/],
+  ];
+
+  for (const [what, damage, expected] of cases) {
+    it(`rejects ${what}`, () => {
+      expect(validatePlayerData(doc(damage), GAME)).toMatch(expected);
+    });
+  }
+
+  it("writes zero keys for every one of these", () => {
+    for (const [, damage] of cases) {
+      const s = mockStorage();
+      const outcome = applyPlayerDataImport(ctx(s), doc(damage));
+      expect(outcome.ok).toBe(false);
+      expect(s.map.size, "a rejected save must not touch storage").toBe(0);
+    }
+  });
+
+  it("accepts null where null is legal, and absent where absent is legal", () => {
+    // the permissive half of the contract: a real save from a scene with no
+    // background, music or voice must still load
+    expect(
+      validatePlayerData(
+        doc((s) => {
+          pres(s)["background"] = null;
+          pres(s)["bgm"] = null;
+          pres(s)["fill"] = null;
+          pres(s)["sprites"] = [];
+          delete vm(s)["actions"]; // optional in the contract
+          s["backlog"] = [{ scene: "op00", text: "hi", speaker: null, voice: null, voiceFile: null }];
+        }),
+        GAME,
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("file size limit", () => {
+  it("accepts an ordinary file and names the problem for a huge one", () => {
+    expect(playerDataSizeProblem(0)).toBeNull();
+    expect(playerDataSizeProblem(1024)).toBeNull();
+    expect(playerDataSizeProblem(PLAYER_DATA_LIMITS.maxFileBytes)).toBeNull();
+    expect(playerDataSizeProblem(PLAYER_DATA_LIMITS.maxFileBytes + 1)).toMatch(/at most 32 MB/);
+    expect(playerDataSizeProblem(200 * 1024 * 1024)).toMatch(/200\.0 MB/);
+  });
+
+  it("refuses a size it cannot trust", () => {
+    expect(playerDataSizeProblem(Number.NaN)).toMatch(/could not be determined/);
+    expect(playerDataSizeProblem(-1)).toMatch(/could not be determined/);
   });
 });

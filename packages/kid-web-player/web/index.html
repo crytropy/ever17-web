@@ -96,7 +96,8 @@
     font:13px monospace; padding:6px 18px; background:rgba(20,30,60,.85);
     color:#9fc3ff; border:1px solid #445; border-radius:4px; cursor:pointer;
   }
-  .confirm-actions button:hover { border-color:#9fc3ff; }
+  .confirm-actions button:hover:not(:disabled) { border-color:#9fc3ff; }
+  .confirm-actions button:disabled { opacity:.45; cursor:default; }
   #menu, #settings, #confirm, #records {
     position:fixed; inset:0; z-index:25; background:rgba(0,0,10,.8);
     display:flex; align-items:center; justify-content:center;

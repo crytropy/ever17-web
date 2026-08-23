@@ -65,6 +65,7 @@ export {
   validatePlayerData,
   summarizePlayerData,
   PLAYER_DATA_LIMITS,
+  playerDataSizeProblem,
 } from "./player-data.js";
 export type { PlayerDataExport, ExportedSlot, PlayerDataSummary } from "./player-data.js";
 export { collectSceneAssets, collectSceneMovies, bgmAssetName } from "./scene-assets.js";

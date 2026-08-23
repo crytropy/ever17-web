@@ -87,6 +87,8 @@ dialog.
 | The game does not re-import or re-convert assets afterwards |  |  |
 | A New Game after it behaves like a genuine first run |  |  |
 | Export beforehand, import afterwards, brings everything back |  |  |
+| "export first" disables "start fresh" until the file is written |  |  |
+| The exported file describes the data as it was *before* the reset |  |  |
 
 Nothing else resets your data — not an update, not an import, not a test run.
 
@@ -188,6 +190,14 @@ What it does and does not include:
 The one thing it does contain is the **path to your installation**, which may
 include your user name — trim that line before sharing if you would rather
 not.
+
+### Exported save data
+
+An export is not just settings. Every save carries its dialogue backlog, so
+the file holds the story text you had recently read, and a slot thumbnail is
+a picture of the screen. Keep it: it is yours, and it stays on your machine
+unless you share it. Do not commit it to a repository or post it publicly —
+the same rule as screenshots below.
 
 ### Screenshots
 

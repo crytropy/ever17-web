@@ -16,8 +16,10 @@ import type { AssetIndex, AssetManifest, ManifestEntry } from "kid-runtime";
 import {
   DEFAULT_GAME_PROFILE,
   labelForScene,
+  playerDataSizeProblem,
   runCountsAsCompletion,
   type GamePackageMeta,
+  type PlayerDataExport,
   type NarrativeProgressCatalog,
 } from "kid-contracts";
 import { PixiStage } from "kid-renderer-pixi";
@@ -34,6 +36,7 @@ import {
   type PlayDataScope,
 } from "./play-data.js";
 import { applyPlayerDataImport, buildPlayerDataExport, mergeCompletion } from "./transfer.js";
+import { PlayerDataBackup } from "./backup.js";
 import { LoadingIndicator } from "./loading-indicator.js";
 import { computeAutoAdvanceDelay } from "./auto-timing.js";
 import { renderRecordsInto } from "./records.js";
@@ -110,33 +113,61 @@ fitStage();
 interface ConfirmOptions {
   /** Text for the confirming button; defaults to OK. */
   okLabel?: string;
-  /** An extra, non-committing action offered alongside (e.g. take a backup). */
-  extra?: { label: string; run: () => void | Promise<void> };
+  /**
+   * An extra, non-committing action offered alongside (e.g. take a backup).
+   * While it runs, confirming is disabled: when the extra action exists to
+   * protect the player from the confirming one, the two must not race.
+   */
+  extra?: { label: string; busyLabel?: string; run: () => unknown };
 }
 
 /** In-page confirmation in the player's own visual language. */
 function confirmDialog(message: string, opts: ConfirmOptions = {}): Promise<boolean> {
   confirmTextEl.textContent = message;
-  const ok = confirmEl.querySelector("#confirm-ok") as HTMLElement;
-  const cancel = confirmEl.querySelector("#confirm-cancel") as HTMLElement;
-  const extraBtn = confirmEl.querySelector("#confirm-extra") as HTMLElement;
-  ok.textContent = opts.okLabel ?? "OK";
+  const ok = confirmEl.querySelector("#confirm-ok") as HTMLButtonElement;
+  const cancel = confirmEl.querySelector("#confirm-cancel") as HTMLButtonElement;
+  const extraBtn = confirmEl.querySelector("#confirm-extra") as HTMLButtonElement;
+  const okLabel = opts.okLabel ?? "OK";
+  ok.textContent = okLabel;
+  ok.disabled = false;
+  extraBtn.disabled = false;
   extraBtn.classList.toggle("hidden", !opts.extra);
   if (opts.extra) extraBtn.textContent = opts.extra.label;
   confirmEl.classList.remove("hidden");
   return new Promise((resolve) => {
+    let settled = false;
     const finish = (value: boolean) => (): void => {
+      if (settled) return;
+      settled = true;
       confirmEl.classList.add("hidden");
       ok.removeEventListener("click", yes);
       cancel.removeEventListener("click", no);
       extraBtn.removeEventListener("click", runExtra);
       ok.textContent = "OK";
+      ok.disabled = false;
+      extraBtn.disabled = false;
       resolve(value);
     };
-    const yes = finish(true);
+    const yes = (): void => {
+      if (ok.disabled) return; // the extra action is still running
+      finish(true)();
+    };
     const no = finish(false);
-    // the extra action runs without answering the question
-    const runExtra = (): void => void opts.extra?.run();
+    // The extra action runs without answering the question - but it holds the
+    // confirming button while it does, so a backup cannot be overtaken by the
+    // reset it was taken to protect against.
+    const runExtra = (): void => {
+      if (!opts.extra || extraBtn.disabled) return;
+      ok.disabled = true;
+      extraBtn.disabled = true;
+      extraBtn.textContent = opts.extra.busyLabel ?? opts.extra.label;
+      void Promise.resolve(opts.extra.run()).finally(() => {
+        if (settled) return; // cancelled while it ran: leave the dialog closed
+        ok.disabled = false;
+        extraBtn.disabled = false;
+        extraBtn.textContent = opts.extra!.label;
+      });
+    };
     ok.addEventListener("click", yes);
     cancel.addEventListener("click", no);
     extraBtn.addEventListener("click", runExtra);
@@ -234,6 +265,14 @@ class WebPlayer {
   private readonly ns: string;
   /** Active play-data generation: which saves, progress and records are live. */
   private scope: PlayDataScope;
+  /**
+   * Owns the ordering between taking a backup and destroying what it backs
+   * up. `inProgress` is what the reset checks before it advances anything.
+   */
+  private readonly backup = new PlayerDataBackup<PlayerDataExport>({
+    assemble: () => this.assembleExport(),
+    deliver: (doc) => this.deliverExport(doc),
+  });
   private slots: SaveSlots;
   private config: VnConfig;
   /** Cross-run scenario state: what a finished route opens up next time. */
@@ -747,38 +786,67 @@ class WebPlayer {
 
   // ------------------------------------------------ save data transfer
   /** Write every save, setting and unlock to a file the player keeps. */
-  private async exportPlayerData(): Promise<void> {
-    try {
-      await this.tracker?.flush();
-      const doc = buildPlayerDataExport(
-        {
-          storage: localStorage,
-          storagePrefix: this.scope.storagePrefix,
-          settingsNamespace: this.ns,
-          gameId: this.meta.gameId,
-          policy: this.meta.persistence ?? null,
-          engineVersion: this.meta.engineVersion,
-        },
-        this.tracker?.snapshot() ?? null,
-      );
-      const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-      const blob = new Blob([JSON.stringify(doc, null, 1)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${this.meta.gameId}-savedata-${stamp}.json`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 10_000);
-      toast(`exported ${doc.slots.length} save slot(s)`);
-    } catch (err) {
-      toast(`export failed: ${(err as Error).message}`);
+  /**
+   * Assemble the backup document. Synchronous by contract: it reads the
+   * generation that is active *now*, and PlayerDataBackup calls it before the
+   * first yield so a reset cannot advance the generation underneath it.
+   *
+   * The completion snapshot is taken from the tracker's memory rather than
+   * after an IndexedDB flush, for the same reason: awaiting the flush first
+   * would be a yield before the snapshot.
+   */
+  private assembleExport(): PlayerDataExport {
+    const scope = this.scope;
+    return buildPlayerDataExport(
+      {
+        storage: localStorage,
+        storagePrefix: scope.storagePrefix,
+        settingsNamespace: this.ns,
+        gameId: this.meta.gameId,
+        policy: this.meta.persistence ?? null,
+        engineVersion: this.meta.engineVersion,
+      },
+      this.tracker?.snapshot() ?? null,
+    );
+  }
+
+  /** Hand a finished document to the browser as a download. */
+  private deliverExport(doc: PlayerDataExport): void {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const blob = new Blob([JSON.stringify(doc, null, 1)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${this.meta.gameId}-savedata-${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  }
+
+  /** Write every save, setting and unlock to a file the player keeps. */
+  private async exportPlayerData(): Promise<boolean> {
+    const outcome = await this.backup.take();
+    if (!outcome.ok) {
+      toast(outcome.alreadyRunning ? "a backup is already being written" : `export failed: ${outcome.reason}`);
+      return false;
     }
+    toast(`exported ${outcome.doc.slots.length} save slot(s)`);
+    // Durability housekeeping only, and deliberately after the fact: the file
+    // is already written from the tracker's in-memory state.
+    void this.tracker?.flush().catch(() => {});
+    return true;
   }
 
   /** Restore a previously exported file, merging rather than replacing. */
   private async importPlayerData(file: File): Promise<void> {
+    // Checked before the file is read: a huge file would otherwise cost the
+    // tab its memory just to be parsed and then rejected.
+    const tooBig = playerDataSizeProblem(file.size);
+    if (tooBig) {
+      toast(`import failed: ${tooBig}`);
+      return;
+    }
     let parsed: unknown;
     try {
       parsed = JSON.parse(await file.text());
@@ -845,10 +913,20 @@ class WebPlayer {
         "Export your save data first if you might want it back.",
       {
         okLabel: "start fresh",
-        extra: { label: "export first", run: () => this.exportPlayerData() },
+        extra: {
+          label: "export first",
+          busyLabel: "exporting…",
+          run: () => this.exportPlayerData(),
+        },
       },
     );
     if (!ok) return;
+    // Belt and braces: the dialog disables "start fresh" while a backup runs,
+    // but the generation must not move for a backup started any other way.
+    if (this.backup.inProgress) {
+      toast("a backup is still being written - try again in a moment");
+      return;
+    }
 
     const previous = this.scope;
     this.endSession();
