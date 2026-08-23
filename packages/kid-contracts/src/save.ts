@@ -23,6 +23,8 @@ export interface VmSaveState {
   steps: number;
   presentation: {
     background: LayerState | null;
+    /** Full-screen CG, when one is showing. Absent in saves written before it. */
+    cg?: LayerState | null;
     sprites: [number, LayerState][];
     bgm: string | null;
     fill: number | null;

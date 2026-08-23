@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { existsSync } from "node:fs";
 import { GameSession, type SessionEvent, type SessionSave } from "../src/game-session.js";
+import { SceneVm } from "../src/vm.js";
 import { fsSceneSource } from "../src/scene-source.js";
 import { IR_DIR } from "./helpers.js";
 
@@ -170,4 +171,78 @@ describe.skipIf(!HAVE_IR)("save/resume identity (full real route)", () => {
     expect(s.route).toContain("tt7a");
     expect(s.lines).toBeGreaterThan(12_000);
   }, 60_000);
+});
+
+describe("a CG is part of the picture, not a passing effect", () => {
+  /**
+   * Regression: a CG shown over a white fill stayed on screen, but the VM
+   * recorded only the fill. Saving there and coming back - exit to title then
+   * Continue, or a backlog rewind - restored the bare fill, so the screen
+   * went white where the artwork belonged.
+   */
+  const cgScene = {
+    formatVersion: 1,
+    scene: "cg",
+    entry: "b0",
+    blocks: {
+      b0: {
+        next: null,
+        ops: [
+          { op: "fillScreen" as const, color: 1, fade: null, plane: null },
+          { op: "cgEffect" as const, asset: "cg01", resource: 0, args: [] },
+          { op: "dialogue" as const, voice: null, speaker: null, text: "under the CG", textIndex: 0, segment: 0 },
+          { op: "setBackground" as const, asset: "bg01", resource: 0, fade: null, arg2: null },
+          { op: "dialogue" as const, voice: null, speaker: null, text: "after the background", textIndex: 0, segment: 0 },
+        ],
+      },
+    },
+    warnings: [],
+    meta: { sceneIds: [], textChunks: 0, resources: [], unknownOpcodeCount: 0, coverage: 1 },
+  };
+
+  const assets = {
+    get: (n?: string | null) => (n ? { file: `images/${n}.png`, width: 800, height: 600 } : undefined),
+    relative: (n?: string | null) => (n ? `images/${n}.png` : null),
+  };
+
+  it("records the CG in the state it can be restored from", () => {
+    const vm = new SceneVm(cgScene as never, assets as never, {});
+    const ev = vm.next();
+    expect(ev.type).toBe("dialogue");
+    // the picture is a CG over a white fill
+    expect(ev.type === "dialogue" && ev.state.fill).toBe(1);
+    expect(ev.type === "dialogue" && ev.state.cg?.file).toBe("images/cg01.png");
+
+    const save = vm.getSaveState();
+    expect(save.presentation.cg?.file, "the save carries the CG").toBe("images/cg01.png");
+  });
+
+  it("restores it, so the moment looks the way it did", () => {
+    const vm = new SceneVm(cgScene as never, assets as never, {});
+    vm.next();
+    const save = vm.getSaveState();
+
+    const resumed = new SceneVm(cgScene as never, assets as never, { resume: save });
+    const ev = resumed.next();
+    expect(ev.type === "dialogue" && ev.state.cg?.file, "not a bare fill").toBe("images/cg01.png");
+    expect(ev.type === "dialogue" && ev.state.fill).toBe(1);
+  });
+
+  it("clears it once a background replaces it on screen", () => {
+    const vm = new SceneVm(cgScene as never, assets as never, {});
+    vm.next();
+    const after = vm.next();
+    expect(after.type === "dialogue" && (after.state.cg ?? null), "the background replaced the CG").toBeFalsy();
+    expect(vm.getSaveState().presentation.cg ?? null).toBeFalsy();
+  });
+
+  it("treats a save written before CGs existed as having none", () => {
+    const vm = new SceneVm(cgScene as never, assets as never, {});
+    vm.next();
+    const save = vm.getSaveState();
+    delete (save.presentation as { cg?: unknown }).cg; // an older save
+    const resumed = new SceneVm(cgScene as never, assets as never, { resume: save });
+    const ev = resumed.next();
+    expect(ev.type === "dialogue" && (ev.state.cg ?? null)).toBeNull();
+  });
 });

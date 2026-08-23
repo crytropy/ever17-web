@@ -12,6 +12,7 @@
  */
 import { Application, Container, Graphics, Sprite, Texture, Assets } from "pixi.js";
 import { AssetLoader, type AssetProgress, type WaitRecord } from "./asset-loader.js";
+import { Animator } from "./animator.js";
 
 import {
   DEFAULT_GAME_PROFILE,
@@ -37,6 +38,8 @@ export interface StageLayer {
 }
 export interface StageState {
   background: StageLayer | null;
+  /** Full-screen CG over the background and fill, when one is showing. */
+  cg?: StageLayer | null;
   sprites: StageLayer[];
   fill: number | null;
 }
@@ -60,11 +63,6 @@ export interface ApplyOptions {
   instant?: boolean;
   /** Multiply all durations (1 = authored speed). */
   speed?: number;
-}
-
-interface Tween {
-  update(dtMs: number): boolean; // false = finished
-  finish(): void;
 }
 
 /** Deterministic PRNG so particle effects are reproducible in shots. */
@@ -93,9 +91,9 @@ export class PixiStage {
   private snow = new Container();
 
   private slots = new Map<number, Sprite>();
-  private tweens = new Set<Tween>();
+  /** Authored time: tweens, `wait` actions and the transitionSync barrier. */
+  private readonly anim = new Animator();
   private pendingFrames: number | null = null;
-  private waitCancel: (() => void) | null = null;
   private activeEffects = new Set<number>();
   private shakeTime = 0;
   private shakeAmp = 0;
@@ -195,9 +193,7 @@ export class PixiStage {
 
   // ---------------------------------------------------------------- ticking
   private tick(dtMs: number): void {
-    for (const t of [...this.tweens]) {
-      if (!t.update(dtMs)) this.tweens.delete(t);
-    }
+    this.anim.tick(dtMs);
     // quake decay (approximation of effect 12 / 4 / 5 and the SHAKE op)
     if (this.shakeAmp > 0.2) {
       this.shakeTime += dtMs;
@@ -229,6 +225,9 @@ export class PixiStage {
   reset(): void {
     // Abandon any picture still being built: without this, returning to the
     // title while an asset was converting left the old loop waiting on it.
+    // cancelApply already stops the tweens and releases the waits, so the
+    // skip() below has nothing left to do - it is kept because reset is also
+    // reachable without a cancel, and both are idempotent.
     this.cancelApply();
     this.skip();
     this.clearSprites(true);
@@ -251,40 +250,11 @@ export class PixiStage {
 
   /** Finish all in-flight transitions and waits immediately. */
   skip(): void {
-    for (const t of [...this.tweens]) t.finish();
-    this.tweens.clear();
-    this.waitCancel?.();
+    this.anim.skip();
   }
 
-  private tween(
-    durationMs: number,
-    step: (k: number) => void,
-    instant: boolean,
-  ): Promise<void> {
-    if (instant || durationMs <= 0) {
-      step(1);
-      return Promise.resolve();
-    }
-    return new Promise((resolve) => {
-      let elapsed = 0;
-      const t: Tween = {
-        update: (dt) => {
-          elapsed += dt;
-          const k = Math.min(1, elapsed / durationMs);
-          step(k);
-          if (k >= 1) {
-            resolve();
-            return false;
-          }
-          return true;
-        },
-        finish: () => {
-          step(1);
-          resolve();
-        },
-      };
-      this.tweens.add(t);
-    });
+  private tween(durationMs: number, step: (k: number) => void, instant: boolean): Promise<void> {
+    return this.anim.tween(durationMs, step, instant);
   }
 
   private takeDurationMs(defaultFrames: number, speed: number): number {
@@ -317,6 +287,22 @@ export class PixiStage {
    */
   cancelApply(): void {
     this.loader.cancel();
+    // Authored time as well as loading: a picture being abandoned may be
+    // parked on a `wait`, mid-tween, or blocked on the transitionSync
+    // barrier, and a replacement must not sit through any of them. Tweens are
+    // dropped rather than finished - an abandoned animation's final frame
+    // would land on whatever replaces it.
+    this.anim.cancel();
+    // A cancelled tween settles without painting, which is right for a fade
+    // the replacement is about to redraw - but the flash overlay is driven by
+    // a fire-and-forget tween from full white down to nothing, and nothing
+    // else ever clears it. Abandoned mid-fade it stays on screen, whiting out
+    // whatever loads next. A flash is momentary by definition, so an
+    // abandoned one is simply over.
+    this.flashRect.alpha = 0;
+    // A frame count staged by transitionTime belongs to the abandoned
+    // picture; it must not size the next one's transition.
+    this.pendingFrames = null;
   }
 
   /** Warm everything one event needs, concurrently. */
@@ -332,6 +318,7 @@ export class PixiStage {
       else if (a.kind === "cgEffect") files.push(a.file);
     }
     files.push(state.background?.file);
+    files.push(state.cg?.file);
     for (const sp of state.sprites) files.push(sp.file);
     return files.filter((f): f is string => Boolean(f));
   }
@@ -402,21 +389,11 @@ export class PixiStage {
           break;
         case "wait": {
           // vm-unit waits look like tenths of a second (docs: Medium).
-          // Skippable: a click (stage.skip()) cancels the remainder.
+          // Skippable by a click, and released outright if the scene is
+          // abandoned - otherwise a load would sit through the remainder of a
+          // pause belonging to a session that no longer exists.
           const ms = a.unit === "frames" ? (a.amount ?? 0) * FRAME_MS : (a.amount ?? 0) * 100;
-          if (!instant && ms > 0) {
-            await new Promise<void>((resolve) => {
-              const timer = setTimeout(() => {
-                this.waitCancel = null;
-                resolve();
-              }, Math.min(ms, 2000) / speed);
-              this.waitCancel = () => {
-                clearTimeout(timer);
-                this.waitCancel = null;
-                resolve();
-              };
-            });
-          }
+          if (!instant && ms > 0) await this.anim.wait(Math.min(ms, 2000) / speed);
           break;
         }
         case "setBackground":
@@ -707,14 +684,7 @@ export class PixiStage {
 
   // ---------------------------------------------------------------- settle
   private settle(): Promise<void> {
-    if (this.tweens.size === 0) return Promise.resolve();
-    return new Promise((resolve) => {
-      const check = (): void => {
-        if (this.tweens.size === 0) resolve();
-        else setTimeout(check, 16);
-      };
-      check();
-    });
+    return this.anim.settle();
   }
 
   /** Force the display to match the target state exactly (skip/restore). */
@@ -725,6 +695,20 @@ export class PixiStage {
     // Warm the whole picture at once rather than a layer at a time.
     await this.prefetch(this.assetsOf(state, []), resolveUrl);
     if (this.loader.stale(epoch)) return;
+    // CG: it sits over the background and the fill, so it has to be settled
+    // explicitly. Without this, restoring a moment whose picture *was* a CG
+    // showed the bare fill underneath - a white screen where the art belongs.
+    if (state.cg?.file) {
+      const cgTex = await this.texture(state.cg.file, resolveUrl);
+      if (this.loader.stale(epoch)) return;
+      if (cgTex) {
+        this.cg.texture = cgTex;
+        this.cg.alpha = 1;
+        this.cg.visible = true;
+      }
+    } else {
+      this.cg.visible = false;
+    }
     // background
     if (state.background?.file) {
       const tex = await this.texture(state.background.file, resolveUrl);

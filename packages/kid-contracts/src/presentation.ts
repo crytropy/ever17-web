@@ -40,6 +40,14 @@ export type PresentationAction =
 /** Immutable copy of the VM's scene state at an event boundary. */
 export interface SceneStateSnapshot {
   background: LayerState | null;
+  /**
+   * Full-screen CG shown over the background and any fill.
+   *
+   * Part of the picture, not a transition: it stays on screen until a
+   * background or a fill replaces it. Omitted by builds that predate it, and
+   * by events that never showed one - absent and null both mean "no CG".
+   */
+  cg?: LayerState | null;
   sprites: LayerState[];
   bgm: string | null;
   /** Screen fill applied instead of a background (colour index from the IR). */

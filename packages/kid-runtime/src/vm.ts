@@ -72,7 +72,7 @@ export class SceneVm {
   /** Current block label and index of the next op inside it. */
   private block: string;
   private pc = 0;
-  private state: SceneState = { background: null, sprites: new Map(), bgm: null, fill: null };
+  private state: SceneState = { background: null, cg: null, sprites: new Map(), bgm: null, fill: null };
   private steps = 0;
   private finished = false;
   /** Scenario variables (choices, VAR_SET writes), keyed by variable id. */
@@ -102,6 +102,7 @@ export class SceneVm {
       this.steps = resume.steps;
       this.state = {
         background: resume.presentation.background ? { ...resume.presentation.background } : null,
+        cg: resume.presentation.cg ? { ...resume.presentation.cg } : null,
         sprites: new Map(resume.presentation.sprites.map(([k, v]) => [k, { ...v }])),
         bgm: resume.presentation.bgm,
         fill: resume.presentation.fill,
@@ -140,6 +141,7 @@ export class SceneVm {
       steps: this.steps,
       presentation: {
         background: this.state.background ? { ...this.state.background } : null,
+        cg: this.state.cg ? { ...this.state.cg } : null,
         sprites: [...this.state.sprites.entries()].map(([k, v]) => [k, { ...v }]),
         bgm: this.state.bgm,
         fill: this.state.fill,
@@ -174,6 +176,7 @@ export class SceneVm {
   private snapshot(): SceneStateSnapshot {
     return {
       background: this.state.background ? { ...this.state.background } : null,
+      cg: this.state.cg ? { ...this.state.cg } : null,
       sprites: [...this.state.sprites.values()].map((s) => ({ ...s })),
       bgm: this.state.bgm,
       fill: this.state.fill,
@@ -303,6 +306,7 @@ export class SceneVm {
         case "setBackground": {
           this.state.background = this.layerFor(op.asset, null, null);
           this.state.fill = null;
+          this.state.cg = null; // a new background replaces the CG on screen
           this.actions.push({
             kind: "setBackground",
             layer: { ...this.state.background },
@@ -315,6 +319,7 @@ export class SceneVm {
         case "fillScreen": {
           this.state.fill = op.color;
           this.state.background = null;
+          this.state.cg = null; // a fill replaces the CG on screen
           this.state.sprites.clear();
           this.actions.push({ kind: "fillScreen", color: op.color, fade: op.fade });
           break;
@@ -378,7 +383,13 @@ export class SceneVm {
         case "viewportRect":
           this.actions.push({ kind: "viewportRect", x: op.x, y: op.y, w: op.w, h: op.h, frames: op.frames });
           break;
-        case "cgEffect":
+        case "cgEffect": {
+          const layer = this.layerFor(op.asset, null, null);
+          // The CG stays on screen after the effect that introduced it, so it
+          // is recorded in the state as well as emitted as a delta -
+          // otherwise a save taken while one is showing restores to the bare
+          // fill underneath it.
+          this.state.cg = layer.file ? layer : null;
           this.actions.push({
             kind: "cgEffect",
             asset: op.asset,
@@ -386,6 +397,7 @@ export class SceneVm {
             args: [...op.args],
           });
           break;
+        }
         case "wait":
           this.actions.push({ kind: "wait", amount: op.amount, unit: "vm" });
           this.opts.onOp?.(op, this.block);

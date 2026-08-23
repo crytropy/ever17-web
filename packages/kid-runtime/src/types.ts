@@ -37,6 +37,12 @@ export interface AssetIndex {
  * JSON-safe contract form. */
 export interface SceneState {
   background: LayerState | null;
+  /**
+   * Full-screen CG shown over the background and any fill. It persists until
+   * a background or a fill replaces it, so it is part of the picture the VM
+   * must be able to restore - not a one-off delta.
+   */
+  cg: LayerState | null;
   sprites: Map<number, LayerState>;
   bgm: string | null;
   /** Screen fill applied instead of a background (colour index from the IR). */

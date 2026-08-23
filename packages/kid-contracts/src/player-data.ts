@@ -252,6 +252,10 @@ function validateVmState(vm: unknown, where: string): string | null {
   const p = vm["presentation"];
   if (!isPlainObject(p)) return `${where}: the save has no presentation state`;
   if (!isNullOr(p["background"], isLayerState)) return `${where}: the save's background is malformed`;
+  // optional: absent in saves written before the CG became part of the picture
+  if (p["cg"] !== undefined && !isNullOr(p["cg"], isLayerState)) {
+    return `${where}: the save's CG layer is malformed`;
+  }
   const sprites = p["sprites"];
   if (!Array.isArray(sprites)) return `${where}: the save has no sprite list`;
   if (sprites.length > PLAYER_DATA_LIMITS.maxSprites) return `${where}: the save has too many sprites`;
