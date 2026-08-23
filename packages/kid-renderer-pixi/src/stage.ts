@@ -12,6 +12,7 @@
  */
 import { Application, Container, Graphics, Sprite, Texture, Assets } from "pixi.js";
 import { AssetLoader, type AssetProgress, type WaitRecord } from "./asset-loader.js";
+import { transformForViewport } from "kid-contracts";
 import { Animator, type AnimationOutcome } from "./animator.js";
 import { Picture, type Surface, type SurfaceSprite } from "./picture.js";
 
@@ -497,22 +498,12 @@ export class PixiStage {
   private applyEpochAtStart = 0;
 
   /**
-   * The world transform a camera rectangle means.
-   *
-   * One place, so a transition and a settle can never disagree about where a
-   * given rect puts the camera - which is what let an abandoned zoom survive
-   * into the scene that replaced it.
+   * The transform a camera rectangle means. Shared with the contracts so the
+   * validator and the renderer cannot disagree, and so nothing here can
+   * produce an infinite or mirrored world.
    */
   private transformFor(rect: StageState["viewport"]): { scale: number; pivotX: number; pivotY: number } {
-    if (!rect) return { scale: 1, pivotX: 0, pivotY: 0 };
-    const w = rect.w ?? this.w;
-    const h = rect.h ?? this.h;
-    // A rect covering the whole canvas is how the scenario zooms back out.
-    if (w >= this.w && h >= this.h) return { scale: 1, pivotX: 0, pivotY: 0 };
-    const scale = Math.min(this.w / w, this.h / h);
-    const cx = (rect.x ?? 0) + w / 2;
-    const cy = (rect.y ?? 0) + h / 2;
-    return { scale, pivotX: cx - this.w / 2 / scale, pivotY: cy - this.h / 2 / scale };
+    return transformForViewport(rect ?? null, { width: this.w, height: this.h });
   }
 
   /** Put the camera exactly where a state says, with no animation. */

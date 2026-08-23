@@ -17,6 +17,7 @@ describe("a cancelled pose crossfade", () => {
     const anim = new Animator(fakeTimers());
     const children: SurfaceSprite[] = [];
     const transients = new Set<SurfaceSprite>();
+    let camera = { scale: 1, pivotX: 0, pivotY: 0 };
     const slots = new Map<number, SurfaceSprite>();
     const existing = sprite("old-tex");
     slots.set(1, existing);
@@ -33,12 +34,10 @@ describe("a cancelled pose crossfade", () => {
       releaseTransient: (s) => void transients.delete(s),
       height: 600, width: 800,
       sizeOf: () => ({ width: 400, height: 500 }),
-      get camera() { return { scale: 1, pivotX: 0, pivotY: 0 }; },
-      setCamera: () => undefined,
-    get camera() { return { ...state.camera }; },
-    setCamera: (scale, pivotX, pivotY) => { state.camera = { scale, pivotX, pivotY }; },
+      get camera() { return { ...camera }; },
+      setCamera: (scale, pivotX, pivotY) => { camera = { scale, pivotX, pivotY }; },
     };
-    const picture = new Picture({ surface, anim, texture: async () => "new-tex", cancelled: () => cancelled });
+    const picture = new Picture({ surface, anim, texture: async (f) => `tex:${f}`, cancelled: () => cancelled });
     let cancelled = false;
 
     const before = children.length;
@@ -56,6 +55,17 @@ describe("a cancelled pose crossfade", () => {
     const ghost = children.find((c) => c.texture === "old-tex" && c !== existing) as ReturnType<typeof sprite>;
     expect(ghost, "a ghost was created").toBeTruthy();
     expect(ghost.destroyed, "it must not survive the operation that owns it").toBe(true);
+    expect(transients.size, "and the register is empty again").toBe(0);
+    const liveUnregistered = children.filter(
+      (c) => !(c as ReturnType<typeof sprite>).destroyed && ![...slots.values()].includes(c),
+    );
+    expect(liveUnregistered, "no live child that no slot owns").toEqual([]);
+
+    // The camera surface is real, not decoration: exercising it here is what
+    // stops it decaying back into unreachable, invalid code.
+    expect(surface.camera).toEqual({ scale: 1, pivotX: 0, pivotY: 0 });
+    surface.setCamera(2, 100, 50);
+    expect(surface.camera).toEqual({ scale: 2, pivotX: 100, pivotY: 50 });
     expect(children.filter((c) => !slots.has(1) || c !== existing).length, "no untracked child remains")
       .toBeLessThanOrEqual(before);
   });

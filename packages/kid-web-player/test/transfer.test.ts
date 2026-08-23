@@ -485,8 +485,8 @@ describe("every PresentationAction kind", () => {
     ["effectOff missing category", { kind: "effectOff" }, /effectOff: category/],
     ["shake missing mode", { kind: "shake", amplitude: 1 }, /shake: mode/],
     ["shake missing amplitude", { kind: "shake", mode: 1 }, /shake: amplitude/],
-    ["viewportRect missing h", { kind: "viewportRect", x: 0, y: 0, w: 1, frames: null }, /viewportRect: h/],
-    ["viewportRect with an infinite x", { kind: "viewportRect", x: Infinity, y: 0, w: 1, h: 1, frames: null }, /viewportRect: x/],
+    ["viewportRect missing h", { kind: "viewportRect", x: 0, y: 0, w: 1, frames: null }, /viewportRect: the camera has no h/],
+    ["viewportRect with an infinite x", { kind: "viewportRect", x: Infinity, y: 0, w: 1, h: 1, frames: null }, /viewportRect: the camera's x is not a number/],
     ["cgEffect with a numeric asset", { kind: "cgEffect", asset: 5, file: null, args: [] }, /cgEffect: asset must be a string or null/],
     ["cgEffect with a numeric file", { kind: "cgEffect", asset: null, file: 5, args: [] }, /cgEffect: file must be a string or null/],
     ["cgEffect missing args", { kind: "cgEffect", asset: null, file: null }, /cgEffect: args must be a list/],
@@ -650,5 +650,50 @@ describe("migration at load time", () => {
     slots.put("2", fakeSave("t_1a", 9));
     expect(migrateSave(slots.get("1")).ok).toBe(false);
     expect(migrateSave(slots.get("2")).ok, "a good slot is unaffected").toBe(true);
+  });
+});
+
+describe("a malformed camera in an imported file", () => {
+  const withViewport = (viewport: unknown) => {
+    const s = JSON.parse(JSON.stringify(fakeSave("op00", 3))) as Record<string, unknown>;
+    (s["vm"] as Record<string, Record<string, unknown>>)["presentation"]["viewport"] = viewport;
+    return {
+      format: PLAYER_DATA_FORMAT, version: 1, gameId: GAME, exportedAt: new Date(0).toISOString(),
+      slots: [{ slot: "1", meta: { slot: "1", label: "x", savedAt: 1, scene: "op00", lines: 3 }, save: s }],
+    };
+  };
+
+  const BAD: unknown[] = [
+    "bad", {}, [], { x: 0, y: 0, w: 0, h: 0 }, { x: 0, y: 0, w: -100, h: 200 },
+    { x: Infinity, y: 0, w: 400, h: 300 }, { x: 0, y: NaN, w: 400, h: 300 }, { x: 0, y: 0, w: 400 },
+  ];
+
+  it("is named in the validation error", () => {
+    for (const bad of BAD) {
+      expect(validatePlayerData(withViewport(bad), GAME), JSON.stringify(bad)).toMatch(/camera state is malformed/);
+    }
+  });
+
+  it("writes zero keys and leaves everything byte-identical", () => {
+    for (const bad of BAD) {
+      const s = mockStorage();
+      // a profile with something in it already
+      new SaveSlots(s, NS).put("2", fakeSave("t_1a", 9));
+      saveConfig(s, NS, { ...DEFAULT_CONFIG, autoSpeed: "fast" });
+      new PersistentProgress(s, NS, GAME, POLICY).record([[1039, 1]]);
+      const before = JSON.stringify([...s.map.entries()].sort());
+      const sizeBefore = s.map.size;
+
+      const outcome = applyPlayerDataImport(ctx(s), withViewport(bad));
+      expect(outcome.ok, JSON.stringify(bad)).toBe(false);
+      expect(s.map.size, "no key added").toBe(sizeBefore);
+      expect(JSON.stringify([...s.map.entries()].sort()), "nothing changed").toBe(before);
+    }
+  });
+
+  it("still accepts a valid camera", () => {
+    for (const good of [null, { x: null, y: null, w: null, h: null }, { x: 200, y: 150, w: 400, h: 300 }]) {
+      expect(validatePlayerData(withViewport(good), GAME), JSON.stringify(good)).toBeNull();
+    }
   });
 });

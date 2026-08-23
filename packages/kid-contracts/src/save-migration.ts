@@ -18,6 +18,7 @@
  */
 import type { LayerState, PresentationAction, ViewportState } from "./presentation.js";
 import { SAVE_FORMAT, SAVE_VERSION, SUPPORTED_SAVE_VERSIONS, type SessionSave } from "./save.js";
+import { validateViewportState } from "./viewport.js";
 
 export type SaveMigrationFailure = "invalid-save" | "unsupported-version" | "legacy-picture-incomplete";
 
@@ -138,6 +139,10 @@ export function migrateSave(raw: unknown): SaveMigrationResult {
     if (!("viewport" in presentation)) {
       return { ok: false, reason: "invalid-save", message: "that save is missing its camera state" };
     }
+    const camera = validateViewportState(presentation["viewport"]);
+    if (!camera.valid) {
+      return { ok: false, reason: "invalid-save", message: `that save's camera state is malformed: ${camera.reason}` };
+    }
     return { ok: true, save: raw as unknown as SessionSave, migrated: false };
   }
 
@@ -156,7 +161,14 @@ export function migrateSave(raw: unknown): SaveMigrationResult {
 
   const viewport = viewportFromActions(actions);
   if (viewport === undefined) {
+    // No evidence at all: a compatibility refusal, not a broken file.
     return { ok: false, reason: "legacy-picture-incomplete", message: LEGACY_PICTURE_INCOMPLETE_MESSAGE };
+  }
+  // Evidence that is present but nonsense is a different thing again: the
+  // save is malformed, and must not be migrated into a camera nobody can use.
+  const legacyCamera = validateViewportState(viewport);
+  if (!legacyCamera.valid) {
+    return { ok: false, reason: "invalid-save", message: `that save's camera state is malformed: ${legacyCamera.reason}` };
   }
 
   // A copy: the stored save is left untouched, so a refusal or a later build

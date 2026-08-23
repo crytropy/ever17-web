@@ -178,3 +178,53 @@ describe("input that is not a save at all", () => {
     expect(migrateSave({ format: SAVE_FORMAT, version: 1, vm: {} })).toMatchObject({ ok: false, reason: "invalid-save" });
   });
 });
+
+describe("evidence that is present but nonsense", () => {
+  /**
+   * Three distinct outcomes, and they must stay distinct: no evidence is a
+   * compatibility refusal the player can act on, broken evidence is a broken
+   * file, and good evidence migrates.
+   */
+  const badRect = (over: Record<string, unknown>) => ({ kind: "viewportRect", x: 0, y: 0, w: 400, h: 300, frames: 30, ...over });
+
+  it("refuses a malformed camera in a current save", () => {
+    for (const bad of ["bad", {}, { x: 0, y: 0, w: 0, h: 0 }, { x: 0, y: 0, w: -100, h: 200 },
+                       { x: Infinity, y: 0, w: 400, h: 300 }, { x: 0, y: NaN, w: 400, h: 300 }]) {
+      const r = migrateSave(save({ cg: null, viewport: bad }, { version: SAVE_VERSION }));
+      expect(r, JSON.stringify(bad)).toMatchObject({ ok: false, reason: "invalid-save" });
+      expect(r.ok === false && r.message).toMatch(/camera state is malformed/);
+    }
+  });
+
+  it("refuses a malformed viewportRect used as legacy evidence", () => {
+    for (const over of [{ w: 0 }, { h: -1 }, { x: NaN }, { w: Infinity }]) {
+      const r = migrateSave(save({ fill: 1 }, { actions: [cgAction("cg01"), badRect(over)] }));
+      expect(r, JSON.stringify(over)).toMatchObject({ ok: false, reason: "invalid-save" });
+    }
+  });
+
+  it("keeps the three outcomes apart", () => {
+    // proven -> migrates
+    expect(migrateSave(save({ fill: 1 }, { actions: [cgAction("cg01"), badRect({})] })))
+      .toMatchObject({ ok: true, migrated: true });
+    // absent -> compatibility refusal
+    expect(migrateSave(save({ fill: 1 }, { actions: [cgAction("cg01")] })))
+      .toMatchObject({ ok: false, reason: "legacy-picture-incomplete" });
+    // malformed -> broken file
+    expect(migrateSave(save({ fill: 1 }, { actions: [cgAction("cg01"), badRect({ w: 0 })] })))
+      .toMatchObject({ ok: false, reason: "invalid-save" });
+  });
+
+  it("accepts a legacy rect whose dimensions are null - the canvas dimension", () => {
+    const r = migrateSave(save({ fill: 1 }, { actions: [cgAction("cg01"), badRect({ w: null, h: null })] }));
+    expect(r).toMatchObject({ ok: true, migrated: true });
+    expect(viewOf(r)).toEqual({ x: 0, y: 0, w: null, h: null });
+  });
+
+  it("still does not edit the stored bytes when it refuses", () => {
+    const doc = save({ cg: null, viewport: { x: 0, y: 0, w: 0, h: 0 } }, { version: SAVE_VERSION });
+    const before = JSON.stringify(doc);
+    migrateSave(doc);
+    expect(JSON.stringify(doc)).toBe(before);
+  });
+});

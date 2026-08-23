@@ -72,3 +72,5 @@ export { collectSceneAssets, collectSceneMovies, bgmAssetName } from "./scene-as
 export type { AssetRef } from "./scene-assets.js";
 export { migrateSave, LEGACY_PICTURE_INCOMPLETE_MESSAGE } from "./save-migration.js";
 export type { SaveMigrationResult, SaveMigrationFailure } from "./save-migration.js";
+export { validateViewportState, isValidViewportState, transformForViewport } from "./viewport.js";
+export type { ViewportValidation } from "./viewport.js";

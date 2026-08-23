@@ -17,6 +17,7 @@
 import { PERSISTENT_STATE_FORMAT, PERSISTENT_STATE_VERSION, type PersistentState } from "./persistence.js";
 import type { PresentationAction } from "./presentation.js";
 import { SAVE_FORMAT, SAVE_VERSION, SUPPORTED_SAVE_VERSIONS, type SessionSave } from "./save.js";
+import { validateViewportState } from "./viewport.js";
 
 export const PLAYER_DATA_FORMAT = "kid-player-data";
 export const PLAYER_DATA_VERSION = 1;
@@ -154,12 +155,6 @@ function isLayerState(v: unknown): boolean {
   );
 }
 
-/** A camera rectangle: four numbers, each of which may be unset. */
-function isViewportState(v: unknown): boolean {
-  if (!isPlainObject(v)) return false;
-  return (["x", "y", "w", "h"] as const).every((f) => isNullOr(v[f], isFiniteNumber));
-}
-
 /**
  * Presentation deltas the VM replays when a saved moment is re-presented.
  *
@@ -227,8 +222,13 @@ function presentationActionProblem(v: unknown): string | null {
       return num("category");
     case "shake":
       return numbers("mode", "amplitude");
-    case "viewportRect":
-      return numbers("x", "y", "w", "h", "frames");
+    case "viewportRect": {
+      // The same rule as a stored camera: offsets may be null, dimensions may
+      // not be zero or negative.
+      const camera = validateViewportState({ x: v["x"], y: v["y"], w: v["w"], h: v["h"] });
+      if (!camera.valid) return `viewportRect: ${camera.reason}`;
+      return num("frames");
+    }
     case "cgEffect": {
       if (!isNullOr(v["asset"], (x) => isBoundedString(x, PLAYER_DATA_LIMITS.maxNameLength))) {
         return "cgEffect: asset must be a string or null";
@@ -271,8 +271,9 @@ function validateVmState(vm: unknown, where: string, version: number): string | 
   if (version === SAVE_VERSION && !("viewport" in p)) {
     return `${where}: the save is missing its camera state`;
   }
-  if (p["viewport"] !== undefined && !isNullOr(p["viewport"], isViewportState)) {
-    return `${where}: the save's camera state is malformed`;
+  if (p["viewport"] !== undefined) {
+    const camera = validateViewportState(p["viewport"]);
+    if (!camera.valid) return `${where}: the save's camera state is malformed - ${camera.reason}`;
   }
   const sprites = p["sprites"];
   if (!Array.isArray(sprites)) return `${where}: the save has no sprite list`;
