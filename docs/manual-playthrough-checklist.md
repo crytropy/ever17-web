@@ -124,7 +124,10 @@ Worth a quick check once per play session rather than once per line.
 - [ ] Auto pauses while the backlog, save/load or settings are open
 - [ ] Auto speed (Fast / Normal / Slow) makes an audible difference
 - [ ] Skip mode is fast and stops when you turn it off
-- [ ] Backlog (`L`) shows recent lines in order
+- [ ] Backlog (`L` or `↑`) shows recent lines in order
+- [ ] `↓` advances the line, the same as a click or space
+- [ ] Clicking a backlog line returns to exactly that sentence
+- [ ] Lines from before a load are shown but are not clickable
 - [ ] Save, then Load, returns to exactly the same line
 - [ ] Returning to the title and back does not lose a save
 - [ ] CONTINUE names the chapter you actually left off in

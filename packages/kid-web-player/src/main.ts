@@ -25,6 +25,7 @@ import {
 import { PixiStage } from "kid-renderer-pixi";
 import { loadConfig, saveConfig, type VnConfig } from "./config.js";
 import { ALL_SLOTS, AUTO_SLOT, QUICK_SLOT, SaveSlots, type SlotMeta } from "./slots.js";
+import type { SessionSave } from "kid-contracts";
 import { CompletionTracker, IdbCompletionStore } from "./completion.js";
 import { PersistentProgress } from "./progress.js";
 import {
@@ -266,6 +267,16 @@ class WebPlayer {
   /** Active play-data generation: which saves, progress and records are live. */
   private scope: PlayDataScope;
   /**
+   * Where each recent line can be resumed from, keyed by the session's own
+   * line ordinal (GameSession.lines increments in lockstep with the backlog,
+   * so the key stays stable even as the backlog trims from the front).
+   *
+   * Saves are stored without their backlog copy: it is reconstructed from the
+   * live backlog on the way back, which keeps this O(lines) rather than
+   * O(lines x backlog).
+   */
+  private readonly rewindPoints = new Map<number, SessionSave>();
+  /**
    * Owns the ordering between taking a backup and destroying what it backs
    * up. `inProgress` is what the reset checks before it advances anything.
    */
@@ -332,7 +343,17 @@ class WebPlayer {
         if (e.key === "Escape" || e.key === "r" || e.key === "R") this.closeRecords();
         return;
       }
-      if (e.key === "Enter" || e.key === " ") this.advance();
+      // Arrows read the way a reader expects: up goes back through what was
+      // said, down goes on to the next line. Both are more discoverable than
+      // the letter keys, which stay as they were.
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        this.openBacklog();
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        if (backlogEl.classList.contains("hidden")) this.advance();
+        else this.closeBacklog(); // down from the log returns to the story
+      } else if (e.key === "Enter" || e.key === " ") this.advance();
       else if (e.key === "a" || e.key === "A") this.toggleAuto();
       else if (e.key === "l" || e.key === "L") this.toggleBacklog();
       else if (e.key === "s" || e.key === "S") this.openMenu("save");
@@ -341,7 +362,7 @@ class WebPlayer {
       else if (e.key === "r" || e.key === "R") this.openRecords();
       else if (e.key === "o" || e.key === "O") this.openSettings();
       else if (e.key === "Escape") {
-        backlogEl.classList.add("hidden");
+        this.closeBacklog();
         menuEl.classList.add("hidden");
         settingsEl.classList.add("hidden");
         (confirmEl.querySelector("#confirm-cancel") as HTMLElement | null)?.click();
@@ -699,6 +720,18 @@ class WebPlayer {
       toast("empty slot");
       return;
     }
+    await this.resumeFrom(save, `loaded: ${this.chapterLabel(save.vm.scene)}`);
+  }
+
+  /**
+   * Swap the live session for one restored from `save`.
+   *
+   * Shared by loading a slot and by jumping back from the backlog, because
+   * the delicate part is the same either way: the loop() that is currently
+   * parked on a waiter has to notice the swap, drop its stale event, and
+   * carry on with the new session instead of deadlocking.
+   */
+  private async resumeFrom(save: SessionSave, note: string): Promise<void> {
     this.cancelAuto();
     this.audio.stopAll();
     // Park the current waiters aside: they are woken only after the session
@@ -718,9 +751,10 @@ class WebPlayer {
         // an older save must not roll global progression backwards
         restoreOverrides: this.progress.reconcile(save.vars),
       });
+      this.rewindPoints.clear(); // the new session's own history starts here
       this.moviesSinceChoice = [];
       this.moviesPlayed = new Set();
-      toast(`loaded: ${this.chapterLabel(save.vm.scene)}`);
+      toast(note);
       wakeClick?.();
       wakeChoice?.(-1);
       void this.loop();
@@ -1038,25 +1072,100 @@ class WebPlayer {
   }
 
   // ------------------------------------------------ backlog
-  private toggleBacklog(): void {
-    if (backlogEl.classList.contains("hidden")) {
-      this.cancelAuto(); // reading the log must not advance the story
-      backlogEl.innerHTML = "";
-      for (const e of this.session?.backlog ?? []) {
-        const div = document.createElement("div");
-        div.className = "entry";
-        const who = e.speaker ? `<div class="who">${e.speaker}</div>` : "";
-        div.innerHTML = `<span class="scn"></span>${who}<div class="line"></div>`;
-        (div.querySelector(".scn") as HTMLElement).textContent = this.chapterLabel(e.scene);
-        (div.querySelector(".line") as HTMLElement).textContent = e.text;
-        backlogEl.appendChild(div);
-      }
-      backlogEl.classList.remove("hidden");
-      backlogEl.scrollTop = backlogEl.scrollHeight;
-    } else {
-      backlogEl.classList.add("hidden");
-      if (this.auto) this.scheduleAuto();
+  /**
+   * Remember how to come back to the line now on screen.
+   *
+   * Keyed by the session's line ordinal rather than by backlog index: the
+   * backlog trims from the front once it is full, which would silently shift
+   * every index, while an ordinal keeps meaning the same line. A restored
+   * moment is re-presented without being re-logged, so writing the same key
+   * again is the correct no-op.
+   */
+  private noteRewindPoint(session: GameSession): void {
+    if (session.lines <= 0) return;
+    let snap: SessionSave;
+    try {
+      snap = session.save();
+    } catch {
+      return; // nothing to snapshot yet
     }
+    // the backlog copy is rebuilt on the way back; keeping one per line would
+    // cost O(lines x backlog)
+    this.rewindPoints.set(session.lines - 1, { ...snap, backlog: [] });
+    const oldest = session.lines - session.backlog.length;
+    for (const key of this.rewindPoints.keys()) {
+      if (key < oldest) this.rewindPoints.delete(key);
+    }
+  }
+
+  /** Line ordinal of backlog entry `index` in the current session. */
+  private backlogOrdinal(session: GameSession, index: number): number {
+    return session.lines - session.backlog.length + index;
+  }
+
+  /** Go back to a line the player picked out of the backlog. */
+  private async jumpToBacklog(index: number): Promise<void> {
+    const session = this.session;
+    if (!session) return;
+    const entry = session.backlog[index];
+    if (!entry) return;
+    const snap = this.rewindPoints.get(this.backlogOrdinal(session, index));
+    if (!snap) {
+      // lines carried in from a loaded save have no VM state of their own
+      toast("that line is from before this session was loaded");
+      return;
+    }
+    // restore re-presents the saved line without re-logging it, so the log it
+    // starts from must already contain that line
+    const save: SessionSave = { ...snap, backlog: session.backlog.slice(0, index + 1) };
+    await this.resumeFrom(save, `back to: ${this.chapterLabel(entry.scene)}`);
+  }
+
+  private toggleBacklog(): void {
+    if (backlogEl.classList.contains("hidden")) this.openBacklog();
+    else this.closeBacklog();
+  }
+
+  private openBacklog(): void {
+    if (!backlogEl.classList.contains("hidden")) return;
+    this.cancelAuto(); // reading the log must not advance the story
+    backlogEl.innerHTML = "";
+    const session = this.session;
+    const log = session?.backlog ?? [];
+    log.forEach((e, i) => {
+      const div = document.createElement("div");
+      div.className = "entry";
+      const who = e.speaker ? `<div class="who">${e.speaker}</div>` : "";
+      div.innerHTML = `<span class="scn"></span>${who}<div class="line"></div>`;
+      (div.querySelector(".scn") as HTMLElement).textContent = this.chapterLabel(e.scene);
+      (div.querySelector(".line") as HTMLElement).textContent = e.text;
+      // Jumping back is only offered where it can actually be honoured -
+      // a line with no rewind point stays plain text rather than a control
+      // that does nothing.
+      if (session && this.rewindPoints.has(this.backlogOrdinal(session, i))) {
+        div.classList.add("jump");
+        div.tabIndex = 0;
+        div.title = "return to this line";
+        const go = (): void => void this.jumpToBacklog(i);
+        div.addEventListener("click", go);
+        div.addEventListener("keydown", (ev) => {
+          if (ev.key === "Enter" || ev.key === " ") {
+            ev.preventDefault();
+            ev.stopPropagation();
+            go();
+          }
+        });
+      }
+      backlogEl.appendChild(div);
+    });
+    backlogEl.classList.remove("hidden");
+    backlogEl.scrollTop = backlogEl.scrollHeight;
+  }
+
+  private closeBacklog(): void {
+    if (backlogEl.classList.contains("hidden")) return;
+    backlogEl.classList.add("hidden");
+    if (this.auto) this.scheduleAuto();
   }
 
   // ------------------------------------------------ core loop
@@ -1163,6 +1272,7 @@ class WebPlayer {
         await this.flushOps();
         if (ev.type === "dialogue") {
           this.trackEvent(ev);
+          this.noteRewindPoint(session);
           this.audio.setBgm(
             ev.state.bgm,
             ev.state.bgm ? `${this.assetsBase}/${this.assets.relative(ev.state.bgm) ?? ""}` : null,
