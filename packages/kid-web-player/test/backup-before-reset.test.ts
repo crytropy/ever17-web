@@ -26,7 +26,7 @@ function mockStorage(): StorageLike & { map: Map<string, string> } {
 const save = (scene: string): SessionSave => ({
   format: SAVE_FORMAT,
   version: SAVE_VERSION,
-  vm: { scene, block: "00000010", pc: 0, steps: 1, presentation: { background: null, cg: null, sprites: [], bgm: null, fill: 0 }, actions: [] },
+  vm: { scene, block: "00000010", pc: 0, steps: 1, presentation: { background: null, cg: null, viewport: null, sprites: [], bgm: null, fill: 0 }, actions: [] },
   vars: [[1039, 1]],
   sysVars: [],
   counters: { lines: 12, scenes: 1 },

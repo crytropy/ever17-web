@@ -25,7 +25,7 @@ function fakeSave(scene = "op00", lines = 42): SessionSave {
       block: "00000010",
       pc: 0,
       steps: 1,
-      presentation: { background: null, cg: null, sprites: [], bgm: null, fill: 0 },
+      presentation: { background: null, cg: null, viewport: null, sprites: [], bgm: null, fill: 0 },
       actions: [],
     },
     vars: [[1203, 0]],

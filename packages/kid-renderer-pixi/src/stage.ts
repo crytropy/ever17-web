@@ -41,6 +41,8 @@ export interface StageState {
   background: StageLayer | null;
   /** Full-screen CG over the background and fill, when one is showing. */
   cg?: StageLayer | null;
+  /** Camera rectangle, or null/absent for the whole canvas. */
+  viewport?: { x: number | null; y: number | null; w: number | null; h: number | null } | null;
   sprites: StageLayer[];
   fill: number | null;
 }
@@ -235,6 +237,7 @@ export class PixiStage {
 
   /** Clear everything - fresh stage (used between shot fixtures). */
   reset(): void {
+    this.dropTransients();
     // Abandon any picture still being built: without this, returning to the
     // title while an asset was converting left the old loop waiting on it.
     // cancelApply already stops the tweens and releases the waits, so the
@@ -296,6 +299,11 @@ export class PixiStage {
    */
   cancelApply(): void {
     this.loader.cancel();
+    // Anything an abandoned operation had on screen purely for its own sake.
+    this.dropTransients();
+    // An abandoned zoom is nobody's camera. The replacement's settle will put
+    // it where that scene says; until then, the whole canvas.
+    this.applyTransform(null);
     // Authored time as well as loading: a picture being abandoned may be
     // parked on a `wait`, mid-tween, or blocked on the transitionSync
     // barrier, and a replacement must not sit through any of them. Tweens are
@@ -454,30 +462,13 @@ export class PixiStage {
           this.shakeAmp = Math.max(4, Math.min(20, (a.amplitude ?? 200) / 25));
           if (instant) this.shakeAmp = 0;
           break;
-        case "viewportRect": {
-          const w = a.w ?? this.w;
-          const h = a.h ?? this.h;
-          const full = w >= this.w && h >= this.h;
-          const scale = full ? 1 : Math.min(this.w / w, this.h / h);
-          const cx = (a.x ?? 0) + w / 2;
-          const cy = (a.y ?? 0) + h / 2;
-          const dur = ((a.frames ?? 30) * FRAME_MS) / speed;
-          const s0 = this.world.scale.x;
-          const p0x = this.world.pivot.x;
-          const p0y = this.world.pivot.y;
-          const px = full ? 0 : cx - this.w / 2 / scale;
-          const py = full ? 0 : cy - this.h / 2 / scale;
-          await this.tween(
-            dur,
-            (k) => {
-              const s = s0 + (scale - s0) * k;
-              this.world.scale.set(s);
-              this.world.pivot.set(p0x + (px - p0x) * k, p0y + (py - p0y) * k);
-            },
+        case "viewportRect":
+          await this.picture.moveCamera(
+            this.transformFor({ x: a.x, y: a.y, w: a.w, h: a.h }),
+            ((a.frames ?? 30) * FRAME_MS) / speed,
             instant,
           );
           break;
-        }
         case "cgEffect":
           // approximation: display the referenced CG as a full overlay until
           // the next background change
@@ -504,6 +495,51 @@ export class PixiStage {
 
   /** Epoch of the apply currently running, for the picture's cancel check. */
   private applyEpochAtStart = 0;
+
+  /**
+   * The world transform a camera rectangle means.
+   *
+   * One place, so a transition and a settle can never disagree about where a
+   * given rect puts the camera - which is what let an abandoned zoom survive
+   * into the scene that replaced it.
+   */
+  private transformFor(rect: StageState["viewport"]): { scale: number; pivotX: number; pivotY: number } {
+    if (!rect) return { scale: 1, pivotX: 0, pivotY: 0 };
+    const w = rect.w ?? this.w;
+    const h = rect.h ?? this.h;
+    // A rect covering the whole canvas is how the scenario zooms back out.
+    if (w >= this.w && h >= this.h) return { scale: 1, pivotX: 0, pivotY: 0 };
+    const scale = Math.min(this.w / w, this.h / h);
+    const cx = (rect.x ?? 0) + w / 2;
+    const cy = (rect.y ?? 0) + h / 2;
+    return { scale, pivotX: cx - this.w / 2 / scale, pivotY: cy - this.h / 2 / scale };
+  }
+
+  /** Put the camera exactly where a state says, with no animation. */
+  private applyTransform(rect: StageState["viewport"]): void {
+    const t = this.transformFor(rect);
+    this.world.scale.set(t.scale);
+    this.world.pivot.set(t.pivotX, t.pivotY);
+  }
+  /**
+   * Display objects owned by an operation rather than by the picture - a pose
+   * crossfade's ghost is the only one today. They are in no slot, so nothing
+   * that settles the scene can find them; keeping them here is what makes an
+   * abandoned operation's leftovers disposable.
+   */
+  private readonly transients = new Set<Sprite>();
+
+  /** Destroy every operation-private display object still hanging around. */
+  private dropTransients(): void {
+    for (const sprite of [...this.transients]) {
+      try {
+        sprite.destroy();
+      } catch {
+        /* already gone */
+      }
+    }
+    this.transients.clear();
+  }
 
   /**
    * The stage's display objects, as the small surface the picture operations
@@ -541,11 +577,20 @@ export class PixiStage {
       },
       createSprite: (texture) => new Sprite(texture as Texture) as unknown as SurfaceSprite,
       addSprite: (sprite) => void stage.spriteLayer.addChild(sprite as unknown as Sprite),
+      ownTransient: (sprite) => void stage.transients.add(sprite as unknown as Sprite),
+      releaseTransient: (sprite) => void stage.transients.delete(sprite as unknown as Sprite),
       height: stage.h,
       width: stage.w,
       sizeOf: (texture) => {
         const t = texture as Texture;
         return { width: t.width, height: t.height };
+      },
+      get camera() {
+        return { scale: stage.world.scale.x, pivotX: stage.world.pivot.x, pivotY: stage.world.pivot.y };
+      },
+      setCamera: (scale, pivotX, pivotY) => {
+        stage.world.scale.set(scale);
+        stage.world.pivot.set(pivotX, pivotY);
       },
     };
   }
@@ -655,6 +700,8 @@ export class PixiStage {
     // Warm the whole picture at once rather than a layer at a time.
     await this.prefetch(this.assetsOf(state, []), resolveUrl);
     if (this.loader.stale(epoch)) return;
+    // Camera: persistent state, so a restored moment is framed the way it was.
+    this.applyTransform(state.viewport ?? null);
     // CG: it sits over the background and the fill, so it has to be settled
     // explicitly. Without this, restoring a moment whose picture *was* a CG
     // showed the bare fill underneath - a white screen where the art belongs.

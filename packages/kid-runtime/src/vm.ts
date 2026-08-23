@@ -72,7 +72,7 @@ export class SceneVm {
   /** Current block label and index of the next op inside it. */
   private block: string;
   private pc = 0;
-  private state: SceneState = { background: null, cg: null, sprites: new Map(), bgm: null, fill: null };
+  private state: SceneState = { background: null, cg: null, sprites: new Map(), bgm: null, fill: null, viewport: null };
   private steps = 0;
   private finished = false;
   /** Scenario variables (choices, VAR_SET writes), keyed by variable id. */
@@ -103,6 +103,7 @@ export class SceneVm {
       this.state = {
         background: resume.presentation.background ? { ...resume.presentation.background } : null,
         cg: resume.presentation.cg ? { ...resume.presentation.cg } : null,
+        viewport: resume.presentation.viewport ? { ...resume.presentation.viewport } : null,
         sprites: new Map(resume.presentation.sprites.map(([k, v]) => [k, { ...v }])),
         bgm: resume.presentation.bgm,
         fill: resume.presentation.fill,
@@ -142,6 +143,7 @@ export class SceneVm {
       presentation: {
         background: this.state.background ? { ...this.state.background } : null,
         cg: this.state.cg ? { ...this.state.cg } : null,
+        viewport: this.state.viewport ? { ...this.state.viewport } : null,
         sprites: [...this.state.sprites.entries()].map(([k, v]) => [k, { ...v }]),
         bgm: this.state.bgm,
         fill: this.state.fill,
@@ -177,6 +179,7 @@ export class SceneVm {
     return {
       background: this.state.background ? { ...this.state.background } : null,
       cg: this.state.cg ? { ...this.state.cg } : null,
+      viewport: this.state.viewport ? { ...this.state.viewport } : null,
       sprites: [...this.state.sprites.values()].map((s) => ({ ...s })),
       bgm: this.state.bgm,
       fill: this.state.fill,
@@ -381,6 +384,11 @@ export class SceneVm {
           this.actions.push({ kind: "spriteOrder", order: [...op.order] });
           break;
         case "viewportRect":
+          // Persistent: the camera stays where this puts it until another
+          // rect replaces it, so it is recorded as state, not only emitted as
+          // a delta. The scenario returns to the whole canvas with an
+          // explicit rect of the canvas size, which normalizes to null below.
+          this.state.viewport = { x: op.x, y: op.y, w: op.w, h: op.h };
           this.actions.push({ kind: "viewportRect", x: op.x, y: op.y, w: op.w, h: op.h, frames: op.frames });
           break;
         case "cgEffect": {

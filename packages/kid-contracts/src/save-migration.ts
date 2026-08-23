@@ -16,7 +16,7 @@
  * presentation and its action deltas, never about a particular game's scenes
  * or assets.
  */
-import type { LayerState, PresentationAction } from "./presentation.js";
+import type { LayerState, PresentationAction, ViewportState } from "./presentation.js";
 import { SAVE_FORMAT, SAVE_VERSION, SUPPORTED_SAVE_VERSIONS, type SessionSave } from "./save.js";
 
 export type SaveMigrationFailure = "invalid-save" | "unsupported-version" | "legacy-picture-incomplete";
@@ -58,6 +58,21 @@ function cgFromActions(actions: readonly PresentationAction[]): LayerState | nul
     } else if (a.kind === "setBackground" || a.kind === "fillScreen") {
       verdict = null;
     }
+  }
+  return verdict;
+}
+
+/**
+ * What the recorded deltas prove about the camera.
+ *
+ * The same shape of evidence as the CG, for the same reason: a zoom outlives
+ * the event that set it, so an event with no viewportRect says nothing about
+ * where the camera is.
+ */
+function viewportFromActions(actions: readonly PresentationAction[]): ViewportState | null | undefined {
+  let verdict: ViewportState | null | undefined;
+  for (const a of actions) {
+    if (a.kind === "viewportRect") verdict = { x: a.x, y: a.y, w: a.w, h: a.h };
   }
   return verdict;
 }
@@ -108,22 +123,39 @@ export function migrateSave(raw: unknown): SaveMigrationResult {
     return { ok: false, reason: "invalid-save", message: "that save has no presentation state" };
   }
 
+  const cgRaw = presentation["cg"];
+  const cgPresent = "cg" in presentation;
+  if (cgPresent && cgRaw !== null && asLayer(cgRaw) === null) {
+    return { ok: false, reason: "invalid-save", message: "that save's CG state is malformed" };
+  }
+
   if (version === SAVE_VERSION) {
-    // v2 must be explicit: an absent cg here is a malformed v2 save, not a
-    // legacy one, and must not be quietly treated as either.
-    if (!("cg" in presentation)) {
+    // The current version must be explicit about everything that outlives an
+    // event. Absent here is malformed, not legacy.
+    if (!cgPresent) {
       return { ok: false, reason: "invalid-save", message: "that save is missing its CG state" };
     }
-    const cg = presentation["cg"];
-    if (cg !== null && asLayer(cg) === null) {
-      return { ok: false, reason: "invalid-save", message: "that save's CG state is malformed" };
+    if (!("viewport" in presentation)) {
+      return { ok: false, reason: "invalid-save", message: "that save is missing its camera state" };
     }
     return { ok: true, save: raw as unknown as SessionSave, migrated: false };
   }
 
   const actions = Array.isArray(vm["actions"]) ? (vm["actions"] as PresentationAction[]) : [];
-  const recovered = recoverLegacyCg(actions);
+
+  // v2 already records the CG; only the camera is unknown. v1 records
+  // neither. Either way, only this event's own deltas can prove what is
+  // missing - so a save migrates when every missing piece is proven, and is
+  // refused when any of them would be a guess.
+  const recovered = cgPresent
+    ? ({ ok: true, cg: cgRaw as LayerState | null } as const)
+    : recoverLegacyCg(actions);
   if (!recovered.ok) {
+    return { ok: false, reason: "legacy-picture-incomplete", message: LEGACY_PICTURE_INCOMPLETE_MESSAGE };
+  }
+
+  const viewport = viewportFromActions(actions);
+  if (viewport === undefined) {
     return { ok: false, reason: "legacy-picture-incomplete", message: LEGACY_PICTURE_INCOMPLETE_MESSAGE };
   }
 
@@ -133,6 +165,7 @@ export function migrateSave(raw: unknown): SaveMigrationResult {
   const savedVm = save["vm"] as Record<string, unknown>;
   const savedPresentation = savedVm["presentation"] as Record<string, unknown>;
   savedPresentation["cg"] = recovered.cg;
+  savedPresentation["viewport"] = viewport;
   save["version"] = SAVE_VERSION;
   return { ok: true, save: save as unknown as SessionSave, migrated: true };
 }

@@ -47,7 +47,7 @@ function fakeSave(scene: string, lines: number, vars: [number, number][] = []): 
   return {
     format: SAVE_FORMAT,
     version: SAVE_VERSION,
-    vm: { scene, block: "00000010", pc: 0, steps: 1, presentation: { background: null, cg: null, sprites: [], bgm: null, fill: 0 }, actions: [] },
+    vm: { scene, block: "00000010", pc: 0, steps: 1, presentation: { background: null, cg: null, viewport: null, sprites: [], bgm: null, fill: 0 }, actions: [] },
     vars,
     sysVars: [],
     counters: { lines, scenes: 1 },
@@ -280,6 +280,7 @@ describe("structural validation of a SessionSave", () => {
     (save["vm"] as Record<string, unknown>)["presentation"] = {
       background: { asset: "bg01", file: "images/bg01.png", width: 800, height: 600, x: 0, slot: null },
       cg: null,
+      viewport: null,
       sprites: [[1, { asset: "ch01", file: "images/ch01.png", width: 200, height: 400, x: 10, slot: 1 }]],
       bgm: "bgm01",
       fill: null,
@@ -528,7 +529,9 @@ describe("save versions across import and export", () => {
   const v1Save = (scene: string) => {
     const s = JSON.parse(JSON.stringify(fakeSave(scene, 3))) as Record<string, unknown>;
     s["version"] = 1;
-    delete (s["vm"] as Record<string, Record<string, unknown>>)["presentation"]["cg"];
+    const p = (s["vm"] as Record<string, Record<string, unknown>>)["presentation"];
+    delete p["cg"];
+    delete p["viewport"];
     return s;
   };
 
@@ -552,6 +555,9 @@ describe("save versions across import and export", () => {
     const s = JSON.parse(JSON.stringify(fakeSave("op00", 3))) as Record<string, unknown>;
     delete (s["vm"] as Record<string, Record<string, unknown>>)["presentation"]["cg"];
     expect(validatePlayerData(docOf(s), GAME)).toMatch(/missing its CG state/);
+    const t = JSON.parse(JSON.stringify(fakeSave("op00", 3))) as Record<string, unknown>;
+    delete (t["vm"] as Record<string, Record<string, unknown>>)["presentation"]["viewport"];
+    expect(validatePlayerData(docOf(t), GAME)).toMatch(/missing its camera state/);
   });
 
   it("rejects a malformed CG at either version", () => {
@@ -609,16 +615,19 @@ describe("migration at load time", () => {
     return s;
   };
 
-  it("recovers a save whose deltas prove the CG", () => {
-    const bg = { asset: "bg01", file: "images/bg01.png", width: null, height: null, x: null, slot: null };
-    const r = migrateSave(v1({ background: bg }, [{ kind: "setBackground", layer: bg, fade: null }]));
+  it("recovers a save whose deltas prove both the CG and the camera", () => {
+    const r = migrateSave(v1({ background: { asset: "bg01", file: "images/bg01.png", width: null, height: null, x: null, slot: null } }, [
+      { kind: "setBackground", layer: { asset: "bg01", file: "images/bg01.png", width: null, height: null, x: null, slot: null }, fade: null },
+      { kind: "viewportRect", x: 0, y: 0, w: 800, h: 600, frames: 30 },
+    ]));
     expect(r).toMatchObject({ ok: true, migrated: true });
     expect(r.ok && r.save.vm.presentation.cg).toBeNull();
+    expect(r.ok && r.save.vm.presentation.viewport).toEqual({ x: 0, y: 0, w: 800, h: 600 });
   });
 
   it("refuses a background whose deltas say nothing - a CG may still cover it", () => {
-    const bg = { asset: "bg01", file: "images/bg01.png", width: null, height: null, x: null, slot: null };
-    expect(migrateSave(v1({ background: bg }))).toMatchObject({ ok: false, reason: "legacy-picture-incomplete" });
+    const r = migrateSave(v1({ background: { asset: "bg01", file: "images/bg01.png", width: null, height: null, x: null, slot: null } }));
+    expect(r).toMatchObject({ ok: false, reason: "legacy-picture-incomplete" });
   });
 
   it("refuses a bare fill it cannot explain, and touches no storage", () => {

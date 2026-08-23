@@ -154,6 +154,12 @@ function isLayerState(v: unknown): boolean {
   );
 }
 
+/** A camera rectangle: four numbers, each of which may be unset. */
+function isViewportState(v: unknown): boolean {
+  if (!isPlainObject(v)) return false;
+  return (["x", "y", "w", "h"] as const).every((f) => isNullOr(v[f], isFiniteNumber));
+}
+
 /**
  * Presentation deltas the VM replays when a saved moment is re-presented.
  *
@@ -259,6 +265,14 @@ function validateVmState(vm: unknown, where: string, version: number): string | 
   }
   if (p["cg"] !== undefined && !isNullOr(p["cg"], isLayerState)) {
     return `${where}: the save's CG layer is malformed`;
+  }
+  // The camera, added in v3 for the same reason as the CG: it outlives the
+  // event that set it, so a save has to say where it is.
+  if (version === SAVE_VERSION && !("viewport" in p)) {
+    return `${where}: the save is missing its camera state`;
+  }
+  if (p["viewport"] !== undefined && !isNullOr(p["viewport"], isViewportState)) {
+    return `${where}: the save's camera state is malformed`;
   }
   const sprites = p["sprites"];
   if (!Array.isArray(sprites)) return `${where}: the save has no sprite list`;

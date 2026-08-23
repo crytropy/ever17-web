@@ -5,21 +5,25 @@
  * verbatim so every save written by earlier phases keeps loading. It names the
  * format, not the game; the payload itself is game-independent.
  */
-import type { LayerState, PresentationAction } from "./presentation.js";
+import type { LayerState, PresentationAction, ViewportState } from "./presentation.js";
 
 export const SAVE_FORMAT = "e17vn-save";
 
 /**
  * Current save version.
  *
- * v2 added the full-screen CG to the recorded picture. v1 did not record it at
- * all, which is a real difference in meaning rather than a missing default: a
- * v1 save cannot say whether a CG was showing, so v1 data reaches the runtime
- * only through `migrateSave`, never directly.
+ * Each bump added a piece of the picture that outlives the event which set
+ * it, and which therefore cannot be defaulted:
+ *
+ *   v2  the full-screen CG
+ *   v3  the camera rectangle set by viewportRect
+ *
+ * An older save cannot say what it never recorded, so older data reaches the
+ * runtime only through `migrateSave`, never directly.
  */
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 /** Versions a migration can accept. Anything else is refused outright. */
-export const SUPPORTED_SAVE_VERSIONS: readonly number[] = [1, 2];
+export const SUPPORTED_SAVE_VERSIONS: readonly number[] = [1, 2, 3];
 
 /**
  * Serializable snapshot of one SceneVm, taken at an event boundary: restoring
@@ -40,6 +44,11 @@ export interface VmSaveState {
      * v1 save could not express.
      */
     cg: LayerState | null;
+    /**
+     * Camera rectangle, or null for the whole canvas. Required at v3: a zoom
+     * outlives the event that set it, so a save inside one has to say.
+     */
+    viewport: ViewportState | null;
     sprites: [number, LayerState][];
     bgm: string | null;
     fill: number | null;

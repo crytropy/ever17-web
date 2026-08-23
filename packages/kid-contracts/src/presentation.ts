@@ -38,6 +38,24 @@ export type PresentationAction =
   | { kind: "cgEffect"; asset: string | null; file: string | null; args: (number | null)[] };
 
 /** Immutable copy of the VM's scene state at an event boundary. */
+/**
+ * The camera: which rectangle of the canvas is on screen.
+ *
+ * Persistent, not a transition. Verified against the scenario data: one
+ * viewportRect is followed by four presented lines before the next one, and
+ * the way back to the whole canvas is an explicit rect of the canvas size -
+ * so a moment saved inside a zoom has to record the zoom, exactly as it has
+ * to record the CG.
+ *
+ * `null` is the whole canvas.
+ */
+export interface ViewportState {
+  x: number | null;
+  y: number | null;
+  w: number | null;
+  h: number | null;
+}
+
 export interface SceneStateSnapshot {
   background: LayerState | null;
   /**
@@ -48,6 +66,8 @@ export interface SceneStateSnapshot {
    * by events that never showed one - absent and null both mean "no CG".
    */
   cg?: LayerState | null;
+  /** Camera rectangle, or null for the whole canvas. */
+  viewport?: ViewportState | null;
   sprites: LayerState[];
   bgm: string | null;
   /** Screen fill applied instead of a background (colour index from the IR). */

@@ -5,7 +5,7 @@
  * defines: AssetIndex (how assets are looked up) and the VM's mutable
  * SceneState. Nothing here knows about SC3, LNK, CPS or WAF.
  */
-import type { LayerState } from "kid-contracts/presentation";
+import type { ViewportState, LayerState } from "kid-contracts/presentation";
 import type { ManifestEntry } from "kid-contracts/manifest";
 
 export type { IrScene, IrOp, IrBlock, IrCondition } from "kid-contracts/ir";
@@ -47,4 +47,10 @@ export interface SceneState {
   bgm: string | null;
   /** Screen fill applied instead of a background (colour index from the IR). */
   fill: number | null;
+  /**
+   * Camera rectangle, or null for the whole canvas. Persistent: a zoom set by
+   * viewportRect stays until another one replaces it, so it is part of the
+   * picture rather than a property of one transition.
+   */
+  viewport: ViewportState | null;
 }

@@ -36,7 +36,8 @@ function harness(opts: { texture?: () => Promise<unknown | null> } = {}) {
   const bgB = sprite("bgB-tex");
   const cg = sprite("cg-tex");
   const added: SurfaceSprite[] = [];
-  const state = { swaps: 0, fillAlpha: 0, painted: [] as number[] };
+  const transients = new Set<SurfaceSprite>();
+  const state = { swaps: 0, fillAlpha: 0, painted: [] as number[], camera: { scale: 1, pivotX: 0, pivotY: 0 } };
   const slots = new Map<number, SurfaceSprite>();
   let cancelled = false;
 
@@ -53,9 +54,13 @@ function harness(opts: { texture?: () => Promise<unknown | null> } = {}) {
     swapBackgrounds: () => void state.swaps++,
     createSprite: (t) => { const s = sprite(t); added.push(s); return s; },
     addSprite: (s) => void added.push(s),
+    ownTransient: (s) => void transients.add(s),
+    releaseTransient: (s) => void transients.delete(s),
     height: 600,
     width: 800,
     sizeOf: () => ({ width: 400, height: 500 }),
+    get camera() { return { ...state.camera }; },
+    setCamera: (scale, pivotX, pivotY) => { state.camera = { scale, pivotX, pivotY }; },
   };
 
   const picture = new Picture({
@@ -65,8 +70,9 @@ function harness(opts: { texture?: () => Promise<unknown | null> } = {}) {
     cancelled: () => cancelled,
   });
   return {
-    picture, anim, surface, slots, bgA, bgB, cg, state, added,
+    picture, anim, surface, slots, bgA, bgB, cg, state, added, transients,
     cancel: () => { cancelled = true; anim.cancel(); },
+    uncancel: () => { cancelled = false; },
     skip: () => anim.skip(),
   };
 }
@@ -171,7 +177,7 @@ describe("cancel while a new sprite is fading in", () => {
 });
 
 describe("cancel during a sprite pose crossfade", () => {
-  it("does not destroy the outgoing ghost", async () => {
+  it("disposes of its own ghost but leaves the slot sprite alone", async () => {
     const h = harness();
     const existing = sprite("old-tex");
     h.slots.set(1, existing);
@@ -180,11 +186,35 @@ describe("cancel during a sprite pose crossfade", () => {
     h.anim.tick(200);
     const ghost = h.added.find((s) => s.texture === "old-tex") as ReturnType<typeof sprite>;
     expect(ghost).toBeTruthy();
+    expect(h.transients.has(ghost), "the ghost is owned by this operation").toBe(true);
 
     h.cancel();
     await op;
-    expect(ghost.destroyed, "a display object of an abandoned scene must not be destroyed").toBe(false);
+    // Cleaning up a private temporary is not painting the abandoned
+    // animation's last frame: the ghost is in no slot, so nothing that
+    // settles the scene could ever find it again.
+    expect(ghost.destroyed, "the operation disposes of what only it can see").toBe(true);
+    expect(h.transients.has(ghost), "and stops owning it").toBe(false);
+    // The slot sprite belongs to the picture; the replacement settles it.
+    expect(existing.destroyed, "a registered sprite is left for the replacement").toBe(false);
+    expect(h.slots.get(1), "still registered").toBe(existing);
     expect(existing.alpha, "not forced opaque").toBeCloseTo(0.2, 5);
+  });
+
+  it("leaves no transient behind however many times it is cancelled", async () => {
+    const h = harness();
+    for (let i = 0; i < 5; i++) {
+      const existing = sprite(`pose-${i}`);
+      h.slots.set(1, existing);
+      const op = h.picture.showSprite({ file: "ch.png", x: 0, slot: 1 }, 1000, false, 200);
+      await flush();
+      h.anim.tick(100);
+      h.cancel();
+      await op;
+      h.uncancel();
+    }
+    expect(h.transients.size, "cancellations do not accumulate display objects").toBe(0);
+    expect(h.added.filter((s) => !(s as ReturnType<typeof sprite>).destroyed && !h.slots.has(1)).length).toBe(0);
   });
 
   it("destroys the ghost when it completes", async () => {
@@ -332,5 +362,85 @@ describe("cancellation and the replacement that follows", () => {
     await expect(op).resolves.toBeUndefined();
     expect(h.anim.active).toBe(0);
     expect(h.anim.waiting).toBe(0);
+  });
+});
+
+describe("the camera", () => {
+  /**
+   * A zoom outlives the event that set it, so it is recorded state - and an
+   * abandoned zoom must not frame the scene that replaces it. The replacement
+   * settles its own camera from its own state; cancelling simply stops.
+   */
+  const target = { scale: 2, pivotX: 100, pivotY: 50 };
+
+  it("reaches its authored framing when it completes", async () => {
+    const h = harness();
+    const op = h.picture.moveCamera(target, 100, false);
+    await flush();
+    h.anim.tick(100);
+    await op;
+    expect(h.state.camera).toEqual(target);
+  });
+
+  it("reaches it immediately when the player skips", async () => {
+    const h = harness();
+    const op = h.picture.moveCamera(target, 1000, false);
+    await flush();
+    h.anim.tick(100);
+    h.skip();
+    await op;
+    expect(h.state.camera).toEqual(target);
+  });
+
+  for (const pct of [25, 50, 90]) {
+    it(`stops where it was when cancelled at ${pct}%`, async () => {
+      const h = harness();
+      const op = h.picture.moveCamera(target, 1000, false);
+      await flush();
+      h.anim.tick(pct * 10);
+      const mid = { ...h.state.camera };
+      expect(mid.scale, "partway").toBeGreaterThan(1);
+      expect(mid.scale).toBeLessThan(2);
+
+      h.cancel();
+      await op;
+      expect(h.state.camera, "not forced to the abandoned target").toEqual(mid);
+      expect(h.state.camera).not.toEqual(target);
+    });
+  }
+
+  it("cannot be moved by a late tick after cancellation", async () => {
+    const h = harness();
+    const op = h.picture.moveCamera(target, 1000, false);
+    await flush();
+    h.anim.tick(200);
+    h.cancel();
+    await op;
+    const afterCancel = { ...h.state.camera };
+    h.anim.tick(5000);
+    expect(h.state.camera, "the abandoned tween is no longer driven").toEqual(afterCancel);
+  });
+
+  it("hands the frame to whatever settles next", async () => {
+    const h = harness();
+    const op = h.picture.moveCamera(target, 1000, false);
+    await flush();
+    h.anim.tick(300);
+    h.cancel();
+    await op;
+    // the replacement settles its own camera from its own state
+    h.surface.setCamera(1, 0, 0);
+    h.anim.tick(5000);
+    expect(h.state.camera, "no intermediate zoom survives").toEqual({ scale: 1, pivotX: 0, pivotY: 0 });
+  });
+
+  it("is harmless to cancel repeatedly", async () => {
+    const h = harness();
+    const op = h.picture.moveCamera(target, 1000, false);
+    await flush();
+    h.anim.tick(100);
+    h.cancel(); h.cancel(); h.cancel();
+    await expect(op).resolves.toBeUndefined();
+    expect(h.anim.active).toBe(0);
   });
 });
