@@ -609,10 +609,16 @@ describe("migration at load time", () => {
     return s;
   };
 
-  it("recovers a save whose picture is a plain background", () => {
-    const r = migrateSave(v1({ background: { asset: "bg01", file: "images/bg01.png", width: null, height: null, x: null, slot: null } }));
+  it("recovers a save whose deltas prove the CG", () => {
+    const bg = { asset: "bg01", file: "images/bg01.png", width: null, height: null, x: null, slot: null };
+    const r = migrateSave(v1({ background: bg }, [{ kind: "setBackground", layer: bg, fade: null }]));
     expect(r).toMatchObject({ ok: true, migrated: true });
     expect(r.ok && r.save.vm.presentation.cg).toBeNull();
+  });
+
+  it("refuses a background whose deltas say nothing - a CG may still cover it", () => {
+    const bg = { asset: "bg01", file: "images/bg01.png", width: null, height: null, x: null, slot: null };
+    expect(migrateSave(v1({ background: bg }))).toMatchObject({ ok: false, reason: "legacy-picture-incomplete" });
   });
 
   it("refuses a bare fill it cannot explain, and touches no storage", () => {

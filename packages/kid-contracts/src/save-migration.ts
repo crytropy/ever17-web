@@ -63,34 +63,21 @@ function cgFromActions(actions: readonly PresentationAction[]): LayerState | nul
 }
 
 /**
- * Decide the CG of a v1 picture, or report that it cannot be known.
+ * Decide the CG of an older picture, or report that it cannot be known.
  *
- * Order matters: the deltas describe what the event actually did, so they
- * outrank the settled state. Only when they are silent does the state get a
- * say, and only where the state is unambiguous.
+ * Only the recorded deltas can prove it. A CG shown by an *earlier* event
+ * stays on screen until a later background or fill replaces it, so the event
+ * a save was taken on may say nothing about the CG at all - and a recorded
+ * background does not mean the background is what the player was looking at.
+ * Neither does an empty picture: a persistent CG may be covering it.
+ *
+ * That leaves exactly one kind of evidence: an action in this event that
+ * touches the full-screen layer. Everything else is a guess, and guessing is
+ * what put a white screen where the artwork belonged.
  */
-function recoverLegacyCg(
-  presentation: Record<string, unknown>,
-  actions: readonly PresentationAction[],
-): { ok: true; cg: LayerState | null } | { ok: false } {
+function recoverLegacyCg(actions: readonly PresentationAction[]): { ok: true; cg: LayerState | null } | { ok: false } {
   const fromActions = cgFromActions(actions);
   if (fromActions !== undefined) return { ok: true, cg: fromActions };
-
-  const background = asLayer(presentation["background"]);
-  if (background) {
-    // A background is the picture. A CG would have had to be drawn over it by
-    // an action, and the deltas showed none.
-    return { ok: true, cg: null };
-  }
-  const fill = presentation["fill"];
-  if (fill === null || fill === undefined) {
-    // Nothing was covering anything: no background, no fill, so no CG either.
-    return { ok: true, cg: null };
-  }
-  // A bare fill with no background and no deltas. The fill may have been the
-  // whole picture, or it may have been the surface a CG was sitting on - and
-  // v1 recorded nothing that tells the two apart. Guessing here is what
-  // produced the white screen.
   return { ok: false };
 }
 
@@ -135,7 +122,7 @@ export function migrateSave(raw: unknown): SaveMigrationResult {
   }
 
   const actions = Array.isArray(vm["actions"]) ? (vm["actions"] as PresentationAction[]) : [];
-  const recovered = recoverLegacyCg(presentation, actions);
+  const recovered = recoverLegacyCg(actions);
   if (!recovered.ok) {
     return { ok: false, reason: "legacy-picture-incomplete", message: LEGACY_PICTURE_INCOMPLETE_MESSAGE };
   }

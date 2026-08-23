@@ -63,11 +63,12 @@ describe("a current save", () => {
 });
 
 describe("a legacy save the data can vouch for", () => {
-  it("migrates one whose picture is a normal background", () => {
-    const result = migrateSave(save({ background: layer("bg01"), fill: null }));
-    expect(result).toMatchObject({ ok: true, migrated: true });
-    expect(cgOf(result), "a background is the picture").toBeNull();
-    expect(result.ok && result.save.version).toBe(SAVE_VERSION);
+  it("refuses a background whose deltas say nothing about the CG layer", () => {
+    // A CG shown by an earlier event stays over this background until a later
+    // setBackground or fillScreen replaces it, so a recorded background does
+    // not prove the background is what the player was looking at.
+    expect(migrateSave(save({ background: layer("bg01"), fill: null })))
+      .toMatchObject({ ok: false, reason: "legacy-picture-incomplete" });
   });
 
   it("migrates one whose actions show a CG still standing", () => {
@@ -121,14 +122,13 @@ describe("a legacy save the data can vouch for", () => {
     expect(cgOf(result)).toBeNull();
   });
 
-  it("migrates an empty picture", () => {
-    const result = migrateSave(save({ background: null, fill: null }));
-    expect(result).toMatchObject({ ok: true, migrated: true });
-    expect(cgOf(result)).toBeNull();
+  it("refuses an empty picture, which an earlier CG may still be covering", () => {
+    expect(migrateSave(save({ background: null, fill: null })))
+      .toMatchObject({ ok: false, reason: "legacy-picture-incomplete" });
   });
 
   it("leaves the stored save untouched while migrating a copy", () => {
-    const doc = save({ background: layer("bg01") });
+    const doc = save({ fill: 1 }, { actions: [{ kind: "cgEffect", asset: "cg01", file: "images/cg01.png", args: [] }] });
     const before = JSON.stringify(doc);
     migrateSave(doc);
     expect(JSON.stringify(doc), "migration reads; it does not edit").toBe(before);
