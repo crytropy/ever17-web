@@ -12,7 +12,8 @@
  */
 import { Application, Container, Graphics, Sprite, Texture, Assets } from "pixi.js";
 import { AssetLoader, type AssetProgress, type WaitRecord } from "./asset-loader.js";
-import { Animator } from "./animator.js";
+import { Animator, type AnimationOutcome } from "./animator.js";
+import { Picture, type Surface, type SurfaceSprite } from "./picture.js";
 
 import {
   DEFAULT_GAME_PROFILE,
@@ -93,7 +94,12 @@ export class PixiStage {
   private slots = new Map<number, Sprite>();
   /** Authored time: tweens, `wait` actions and the transitionSync barrier. */
   private readonly anim = new Animator();
-  private pendingFrames: number | null = null;
+  /**
+   * The cancellable picture operations. They run against a small surface
+   * rather than against Pixi directly, so the finalization each one must skip
+   * when abandoned is testable without a WebGL context.
+   */
+  private picture!: Picture;
   private activeEffects = new Set<number>();
   private shakeTime = 0;
   private shakeAmp = 0;
@@ -157,6 +163,12 @@ export class PixiStage {
         .map(([id]) => Number(id)),
     );
     this.world.addChild(this.bgA, this.bgB, this.spriteLayer);
+    this.picture = new Picture({
+      surface: this.surface(),
+      anim: this.anim,
+      texture: (file) => this.texture(file, this.lastResolveUrl ?? ((f) => f)),
+      cancelled: () => this.loader.stale(this.applyEpochAtStart),
+    });
     this.fx.addChild(this.tintRect, this.beamRect, this.fogRect, this.snow, this.flashRect);
     // cg overlays sit above the fill: op00 letterboxes its CGs over white
     this.shaker.addChild(this.world, this.fillRect, this.cg, this.fx);
@@ -244,7 +256,6 @@ export class PixiStage {
     this.shaker.x = this.shaker.y = 0;
     this.world.scale.set(1);
     this.world.pivot.set(0, 0);
-    this.pendingFrames = null;
     this.rand = lcg(0x1d117);
   }
 
@@ -253,14 +264,12 @@ export class PixiStage {
     this.anim.skip();
   }
 
-  private tween(durationMs: number, step: (k: number) => void, instant: boolean): Promise<void> {
+  private tween(durationMs: number, step: (k: number) => void, instant: boolean): Promise<AnimationOutcome> {
     return this.anim.tween(durationMs, step, instant);
   }
 
   private takeDurationMs(defaultFrames: number, speed: number): number {
-    const frames = this.pendingFrames ?? defaultFrames;
-    this.pendingFrames = null;
-    return (frames * FRAME_MS) / speed;
+    return this.anim.takeDurationMs(defaultFrames, speed, FRAME_MS);
   }
 
   /**
@@ -300,9 +309,6 @@ export class PixiStage {
     // whatever loads next. A flash is momentary by definition, so an
     // abandoned one is simply over.
     this.flashRect.alpha = 0;
-    // A frame count staged by transitionTime belongs to the abandoned
-    // picture; it must not size the next one's transition.
-    this.pendingFrames = null;
   }
 
   /** Warm everything one event needs, concurrently. */
@@ -362,6 +368,8 @@ export class PixiStage {
     this.lastState = state;
     this.lastResolveUrl = resolveUrl;
     const epoch = this.loader.epoch;
+    this.applyEpochAtStart = epoch;
+    this.lastResolveUrl = resolveUrl;
     const started = Date.now();
 
     // Warm everything this event needs together, then play the authored
@@ -381,7 +389,7 @@ export class PixiStage {
       }
       switch (a.kind) {
         case "transitionTime":
-          this.pendingFrames = a.frames;
+          this.anim.stageFrames(a.frames);
           break;
         case "transitionSync":
           // barrier: wait for whatever is currently animating
@@ -397,38 +405,36 @@ export class PixiStage {
           break;
         }
         case "setBackground":
-          await this.setBackground(a.layer, a.fade, resolveUrl, instant, speed);
+          await this.picture.setBackground(
+            a.layer,
+            a.fade ? this.takeDurationMs(20, speed) : 0,
+            instant || !a.fade,
+          );
           break;
         case "fillScreen": {
-          const target = a.color === 1 ? 0xffffff : 0x000000;
-          this.fillRect.clear().rect(0, 0, this.w, this.h).fill(target);
           this.clearSprites(instant);
-          this.cg.visible = false;
-          const dur = a.fade ? this.takeDurationMs(18, speed) : 0;
-          await this.tween(dur, (k) => (this.fillRect.alpha = k), instant || !a.fade);
-          this.fillRect.alpha = 1;
-          this.bgA.visible = this.bgB.visible = false;
-          break;
-        }
-        case "showSprite":
-          await this.showSprite(a.layer, a.mode, resolveUrl, instant, speed);
-          break;
-        case "hideSprite": {
-          const targets =
-            a.slot == null ? [...this.slots.keys()] : this.slots.has(a.slot) ? [a.slot] : [];
-          await Promise.all(
-            targets.map(async (slot) => {
-              const sp = this.slots.get(slot);
-              if (!sp) return;
-              const dur = a.mode ? this.takeDurationMs(12, speed) : 0;
-              const from = sp.alpha;
-              await this.tween(dur, (k) => (sp.alpha = from * (1 - k)), instant || !a.mode);
-              sp.destroy();
-              this.slots.delete(slot);
-            }),
+          await this.picture.fillScreen(
+            a.color,
+            a.fade ? this.takeDurationMs(18, speed) : 0,
+            instant || !a.fade,
           );
           break;
         }
+        case "showSprite":
+          await this.picture.showSprite(
+            a.layer,
+            a.mode ? this.takeDurationMs(12, speed) : 0,
+            instant || !a.mode,
+            (a.mode ? this.takeDurationMs(12, speed) : 0) || 200 / speed,
+          );
+          break;
+        case "hideSprite":
+          await this.picture.hideSprite(
+            a.slot,
+            a.mode ? this.takeDurationMs(12, speed) : 0,
+            instant || !a.mode,
+          );
+          break;
         case "spriteOrder": {
           // z-order of the three sprite slots; index = depth (approximation)
           a.order.forEach((slotVal, depth) => {
@@ -472,19 +478,11 @@ export class PixiStage {
           );
           break;
         }
-        case "cgEffect": {
+        case "cgEffect":
           // approximation: display the referenced CG as a full overlay until
           // the next background change
-          const tex = await this.texture(a.file, resolveUrl);
-          if (tex) {
-            this.cg.texture = tex;
-            this.cg.visible = true;
-            this.cg.alpha = 0;
-            const dur = this.takeDurationMs(18, speed);
-            await this.tween(dur, (k) => (this.cg.alpha = k), instant);
-          }
+          await this.picture.showCg(a.file, this.takeDurationMs(18, speed), instant);
           break;
-        }
       }
     }
 
@@ -504,93 +502,55 @@ export class PixiStage {
     });
   }
 
-  private async setBackground(
-    layer: StageLayer,
-    fade: number | null,
-    resolveUrl: (f: string) => string,
-    instant: boolean,
-    speed: number,
-  ): Promise<void> {
-    const tex = await this.texture(layer.file, resolveUrl);
-    if (!tex) return;
-    this.cg.visible = false;
-    const dur = fade ? this.takeDurationMs(20, speed) : 0;
-    // crossfade: new texture on bgB over bgA, then swap roles
-    this.bgB.texture = tex;
-    this.bgB.y = Math.max(0, this.h - tex.height);
-    this.bgB.visible = true;
-    this.bgB.alpha = 0;
-    const fillWas = this.fillRect.alpha;
-    await this.tween(
-      dur,
-      (k) => {
-        this.bgB.alpha = k;
-        if (fillWas > 0) this.fillRect.alpha = fillWas * (1 - k);
+  /** Epoch of the apply currently running, for the picture's cancel check. */
+  private applyEpochAtStart = 0;
+
+  /**
+   * The stage's display objects, as the small surface the picture operations
+   * work against. `bgA`/`bgB` are read through getters because a crossfade
+   * swaps which object is which.
+   */
+  private surface(): Surface {
+    const stage = this;
+    return {
+      get bgA() {
+        return stage.bgA as unknown as SurfaceSprite;
       },
-      instant || !fade,
-    );
-    this.bgB.alpha = 1;
-    this.fillRect.alpha = 0;
-    const old = this.bgA;
-    this.bgA = this.bgB;
-    this.bgB = old;
-    this.bgB.visible = false;
-    this.world.setChildIndex(this.bgA, 0);
+      get bgB() {
+        return stage.bgB as unknown as SurfaceSprite;
+      },
+      get cg() {
+        return stage.cg as unknown as SurfaceSprite;
+      },
+      fill: {
+        get alpha() {
+          return stage.fillRect.alpha;
+        },
+        set alpha(v: number) {
+          stage.fillRect.alpha = v;
+        },
+        paint: (color) => void stage.fillRect.clear().rect(0, 0, stage.w, stage.h).fill(color),
+      },
+      slots: stage.slots as unknown as Map<number, SurfaceSprite>,
+      swapBackgrounds: () => {
+        const old = stage.bgA;
+        stage.bgA = stage.bgB;
+        stage.bgB = old;
+        stage.bgB.visible = false;
+        stage.world.setChildIndex(stage.bgA, 0);
+      },
+      createSprite: (texture) => new Sprite(texture as Texture) as unknown as SurfaceSprite,
+      addSprite: (sprite) => void stage.spriteLayer.addChild(sprite as unknown as Sprite),
+      height: stage.h,
+      width: stage.w,
+      sizeOf: (texture) => {
+        const t = texture as Texture;
+        return { width: t.width, height: t.height };
+      },
+    };
   }
 
-  private async showSprite(
-    layer: StageLayer,
-    mode: number | null,
-    resolveUrl: (f: string) => string,
-    instant: boolean,
-    speed: number,
-  ): Promise<void> {
-    const slot = layer.slot ?? 1;
-    const tex = await this.texture(layer.file, resolveUrl);
-    if (!tex) return;
-    let sp = this.slots.get(slot);
-    const targetX = layer.x ?? Math.round((this.w - tex.width) / 2);
-    const targetY = this.h - tex.height;
-    const dur = mode ? this.takeDurationMs(12, speed) : 0;
-    if (!sp) {
-      sp = new Sprite(tex);
-      sp.x = targetX;
-      sp.y = targetY;
-      sp.alpha = 0;
-      sp.zIndex = slot;
-      this.spriteLayer.addChild(sp);
-      this.slots.set(slot, sp);
-      await this.tween(dur, (k) => (sp!.alpha = k), instant || !mode);
-      sp.alpha = 1;
-      return;
-    }
-    if (sp.texture !== tex) {
-      // pose change in place: quick cross-dissolve via overlay sprite
-      const ghost = new Sprite(sp.texture);
-      ghost.x = sp.x;
-      ghost.y = sp.y;
-      ghost.zIndex = sp.zIndex;
-      this.spriteLayer.addChild(ghost);
-      sp.texture = tex;
-      sp.y = this.h - tex.height;
-      sp.alpha = 0;
-      await this.tween(
-        dur,
-        (k) => {
-          sp!.alpha = k;
-          ghost.alpha = 1 - k;
-        },
-        instant || !mode,
-      );
-      ghost.destroy();
-      sp.alpha = 1;
-    }
-    if (sp.x !== targetX) {
-      // sprite movement primitive
-      const from = sp.x;
-      await this.tween(dur || 200 / speed, (k) => (sp!.x = from + (targetX - from) * k), instant);
-    }
-  }
+
 
   private clearSprites(instant: boolean): void {
     void instant;
@@ -683,7 +643,7 @@ export class PixiStage {
   }
 
   // ---------------------------------------------------------------- settle
-  private settle(): Promise<void> {
+  private settle(): Promise<AnimationOutcome> {
     return this.anim.settle();
   }
 

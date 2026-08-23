@@ -57,7 +57,7 @@ describe("cancel during an authored wait", () => {
     expect(anim.waiting).toBe(1);
 
     anim.cancel();
-    await expect(waiting).resolves.toBeUndefined();
+    await expect(waiting).resolves.toBe("cancelled");
     expect(anim.waiting).toBe(0);
     // and the clock never had to reach the end of the pause
     expect(t.now()).toBe(0);
@@ -84,7 +84,7 @@ describe("cancel during an authored wait", () => {
     await flush();
     expect(flag.done).toBe(false);
     t.advance(1);
-    await expect(waiting).resolves.toBeUndefined();
+    await expect(waiting).resolves.toBe("completed");
   });
 });
 
@@ -98,7 +98,7 @@ describe("cancel during a tween", () => {
     expect(frames).toEqual([0.25]);
 
     anim.cancel();
-    await expect(running).resolves.toBeUndefined();
+    await expect(running).resolves.toBe("cancelled");
     expect(frames, "an abandoned animation must not land on its last frame").toEqual([0.25]);
     expect(anim.active).toBe(0);
   });
@@ -109,7 +109,7 @@ describe("cancel during a tween", () => {
     const running = anim.tween(1000, (k) => frames.push(k), false);
     anim.tick(250);
     anim.skip();
-    await expect(running).resolves.toBeUndefined();
+    await expect(running).resolves.toBe("skipped");
     expect(frames, "the authored picture is still the right one").toEqual([0.25, 1]);
   });
 
@@ -167,14 +167,14 @@ describe("cancel while transitionSync is settling", () => {
     expect(flag.done, "still blocked on the running tween").toBe(false);
 
     anim.cancel();
-    await expect(barrier).resolves.toBeUndefined();
+    await expect(barrier).resolves.toBe("cancelled");
     expect(anim.active).toBe(0);
     expect(anim.waiting).toBe(0);
   });
 
   it("resolves immediately when nothing is animating", async () => {
     const anim = new Animator(fakeTimers());
-    await expect(anim.settle()).resolves.toBeUndefined();
+    await expect(anim.settle()).resolves.toBe("completed");
   });
 
   it("resolves normally once the tween it was waiting for finishes", async () => {
@@ -189,9 +189,9 @@ describe("cancel while transitionSync is settling", () => {
     expect(flag.done).toBe(false);
 
     anim.tick(200); // the tween completes
-    await running;
+    await expect(running).resolves.toBe("completed");
     t.advance(16);
-    await expect(barrier).resolves.toBeUndefined();
+    await expect(barrier).resolves.toBe("completed");
   });
 });
 
@@ -219,7 +219,7 @@ describe("a replacement scene", () => {
     const fresh: number[] = [];
     const next = anim.tween(100, (k) => fresh.push(k), false);
     anim.tick(100);
-    await expect(next).resolves.toBeUndefined();
+    await expect(next).resolves.toBe("completed");
     expect(fresh.at(-1)).toBe(1);
     expect(painted, "the abandoned fade never reached its end").not.toContain(1);
   });
@@ -238,7 +238,7 @@ describe("repeated and redundant cancellation", () => {
     anim.cancel();
     anim.cancel();
     anim.cancel();
-    await expect(running).resolves.toBeUndefined();
+    await expect(running).resolves.toBe("cancelled");
     expect(anim.active).toBe(0);
     expect(anim.waiting).toBe(0);
   });
@@ -251,7 +251,7 @@ describe("repeated and redundant cancellation", () => {
     // reset(): cancelApply() then skip()
     anim.cancel();
     anim.skip();
-    await expect(running).resolves.toBeUndefined();
+    await expect(running).resolves.toBe("cancelled");
     expect(frames, "the redundant skip paints nothing").toEqual([0.1]);
     expect(anim.active).toBe(0);
   });
@@ -297,5 +297,30 @@ describe("what a cancelled tween leaves behind", () => {
     anim.skip();
     await fading;
     expect(alpha, "a skipped fade completes").toBe(0);
+  });
+});
+
+describe("a staged transition frame count", () => {
+  it("sizes the next transition and is then spent", () => {
+    const anim = new Animator(fakeTimers());
+    anim.stageFrames(60);
+    expect(anim.takeDurationMs(20, 1, 10)).toBe(600);
+    expect(anim.stagedFrames, "consumed by the transition it sized").toBeNull();
+    expect(anim.takeDurationMs(20, 1, 10), "back to the default").toBe(200);
+  });
+
+  it("cannot survive into the picture that replaces it", () => {
+    const anim = new Animator(fakeTimers());
+    anim.stageFrames(600);           // the abandoned scene asked for a long fade
+    anim.cancel();
+    expect(anim.stagedFrames, "abandoned along with the picture").toBeNull();
+    expect(anim.takeDurationMs(20, 1, 10), "the replacement uses its own default").toBe(200);
+  });
+
+  it("is not disturbed by a player skip, which is still the same picture", () => {
+    const anim = new Animator(fakeTimers());
+    anim.stageFrames(60);
+    anim.skip();
+    expect(anim.stagedFrames, "the authored transition is still this scene's").toBe(60);
   });
 });
