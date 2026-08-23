@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseSc3 } from "../src/sc3/chunks.js";
 import { parseExpr, exprImm, exprVarTest } from "../src/sc3/expr.js";
-import { parseTextChunk } from "../src/sc3/text.js";
+import { decodeDbcs, parseTextChunk } from "../src/sc3/text.js";
 import { archive, HAVE_DAT, scr } from "./helpers.js";
 
 describe("expression parser (synthetic)", () => {
@@ -135,5 +135,33 @@ describe.skipIf(!HAVE_DAT)("SC3 container (script.dat)", () => {
     expect(voice).toMatchObject({ id: "S1A012" });
     const text = parsed.tokens.filter((t) => t.kind === "text").map((t) => (t.kind === "text" ? t.text : ""));
     expect(text.join("")).toContain("止痛药");
+  });
+});
+
+describe("the engine's private word-space code", () => {
+  /**
+   * KID's font is indexed by DBCS code, not Unicode, and its inter-word space
+   * sits in the last circled-number slot of each encoding's symbol row. A
+   * conformant decoder turns that into a number glyph, which is how
+   * `Insel null` reached the screen as `Insel⒇null`.
+   */
+  it("decodes the GBK slot as a space, not a parenthesized twenty", () => {
+    // full-width "Insel" + A2D8 + full-width "null"
+    const raw = Buffer.from("a3c9a3eea3f3a3e5a3ec" + "a2d8" + "a3eea3f5a3eca3ec", "hex");
+    expect(decodeDbcs(raw, "gbk")).toBe("Ｉｎｓｅｌ　ｎｕｌｌ");
+    expect(decodeDbcs(raw, "gbk")).not.toContain("⒇");
+  });
+
+  it("decodes the Shift-JIS slot as a space, not a circled twenty", () => {
+    // 田中 + 8753 + 優, as debug.scr writes every character's name
+    const raw = Buffer.from("9363928687539744", "hex");
+    expect(decodeDbcs(raw, "shift_jis")).toBe("田中　優");
+    expect(decodeDbcs(raw, "shift_jis")).not.toContain("⑳");
+  });
+
+  it("leaves the other circled numbers alone", () => {
+    // debug.scr uses these literally in a font test string
+    const raw = Buffer.from("8749874a874b", "hex");
+    expect(decodeDbcs(raw, "shift_jis")).toBe("⑩⑪⑫");
   });
 });

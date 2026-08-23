@@ -54,7 +54,13 @@ function renderTemplate(raw: string, meta: GamePackageMeta): string {
     PWA_SHORT_NAME: b?.pwaShortName ?? b?.title ?? meta.title,
     STAGE_W: String(meta.profile.canvas.width),
     STAGE_H: String(meta.profile.canvas.height),
-    SW_CACHE: `${meta.profile.storageNamespace}-v3`,
+    // Pipeline data (IR, converted assets) is served cache-first, so this
+    // must change whenever a rebuild could change that data. Deriving it from
+    // the package's own identity does that automatically: a re-import under a
+    // new engine version, or from different game files, lands a new cache
+    // name and the stale one is dropped on activate. A hand-bumped constant
+    // did not - a corrected decoder kept rendering from the old cache.
+    SW_CACHE: `${meta.profile.storageNamespace}-${meta.engineVersion}-${meta.sourceFingerprint}`,
   };
   return raw.replace(/\{\{([A-Z_]+)\}\}/g, (m, key: string) => vars[key] ?? m);
 }

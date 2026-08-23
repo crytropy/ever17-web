@@ -50,13 +50,38 @@ export interface ParsedTextChunk {
 export type TextEncoding = "gbk" | "shift_jis";
 
 const decoders = new Map<TextEncoding, InstanceType<typeof TextDecoder>>();
+
+/**
+ * The engine's private word-space code.
+ *
+ * KID's font is indexed by raw DBCS code, not by Unicode, and the space it
+ * puts between Latin words lives in the last "circled number" slot of each
+ * encoding's symbol row. A standards-conformant decoder therefore turns it
+ * into a number glyph:
+ *
+ *   Shift-JIS 0x8753 -> U+2473 (CIRCLED NUMBER TWENTY)
+ *   GBK       0xA2D8 -> U+2487 (PARENTHESIZED NUMBER TWENTY)
+ *
+ * The evidence that these are spaces and not numbers: 0xA2D8 is the only
+ * A2-row character in the whole Chinese script (302 uses) and every one sits
+ * between two Latin words - `Insel<sp>null`, `Zweite<sp>stock`,
+ * `United<sp>Land`. 0x8753 appears in debug.scr between every surname and
+ * given name - `田中<sp>優`, `茜ヶ崎<sp>空`. The Chinese localizers evidently
+ * remapped the original's slot to the matching slot of their own encoding.
+ *
+ * Mapped to U+3000: the font cell is full-width, so a full-width space
+ * reproduces the original spacing. Other circled numbers are left alone -
+ * debug.scr uses ⑩⑪⑫ literally in a font test string.
+ */
+const PRIVATE_SPACE = /[\u2473\u2487]/g;
+
 export function decodeDbcs(raw: Buffer, encoding: TextEncoding): string {
   let d = decoders.get(encoding);
   if (!d) {
     d = new TextDecoder(encoding, { fatal: false });
     decoders.set(encoding, d);
   }
-  return d.decode(raw);
+  return d.decode(raw).replace(PRIVATE_SPACE, "\u3000");
 }
 
 /** Read a run of text bytes (stops at control bytes < 0x20). */
