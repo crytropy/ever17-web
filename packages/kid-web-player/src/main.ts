@@ -52,7 +52,28 @@ import {
 } from "./rewind.js";
 import { routeKeyDown, routeKeyUp, type KeyAction, type Overlay } from "./keys.js";
 import { AutosaveGate } from "./autosave.js";
+import { MoviePlayer } from "./movie.js";
+import { SessionSwap } from "./session-swap.js";
 import { matchEndings, type RouteGraphJson } from "kid-graph/model";
+
+/** A queued media operation, drained once the next line is presented. */
+interface PendingOp {
+  op: string;
+  asset?: string;
+  arg1?: number | null;
+}
+
+/** Everything that belongs to one GameSession rather than to the player. */
+interface SessionContext {
+  /** Decides which scene entries of this session deserve an autosave. */
+  gate: AutosaveGate;
+  /** Media this session has queued but not yet played. */
+  ops: PendingOp[];
+  /** An autosave this session owes, taken once its line is on screen. */
+  autosaveDue: boolean;
+}
+
+const newSessionContext = (): SessionContext => ({ gate: new AutosaveGate(), ops: [], autosaveDue: false });
 
 declare global {
   interface Window {
@@ -271,7 +292,13 @@ class AudioBox {
 
 // ---------------------------------------------------------------- player
 class WebPlayer {
-  private session: GameSession | null = null;
+  /**
+   * The live session. Owned by the swap controller so that "which session is
+   * current" and "when may the old one be released" are the same decision.
+   */
+  private get session(): GameSession | null {
+    return this.swap.session;
+  }
   private stage: PixiStage | null = null;
   private readonly ns: string;
   /** Active play-data generation: which saves, progress and records are live. */
@@ -282,10 +309,31 @@ class WebPlayer {
    * which keeps this O(lines) rather than O(lines x backlog).
    */
   private readonly rewindPoints = new RewindLog();
-  /** Decides which scene entries deserve an autosave; armed before each session. */
-  private readonly autosaveGate = new AutosaveGate();
-  /** An autosave owed to a scene transition, taken once the line is on screen. */
-  private autosaveDue = false;
+  /**
+   * State that belongs to one session rather than to the player.
+   *
+   * Kept together so a session swap can build the replacement's copy first
+   * and adopt it only once the replacement exists - a failed load must leave
+   * the running session's autosave counter and queued media exactly as they
+   * were, not half-reset for a session that never came into being.
+   */
+  private ctx: SessionContext = newSessionContext();
+  /**
+   * Owns the movie surface and, crucially, the resolver of whatever the loop
+   * is awaiting while a movie plays - so stopping one always releases the
+   * loop rather than orphaning it.
+   */
+  private readonly movies = new MoviePlayer({
+    el: movieEl,
+    exists: async (url, signal) => {
+      const res = await fetch(url, { method: "HEAD", signal }).catch(() => null);
+      return res?.ok === true;
+    },
+    setTimer: (fn, ms) => setTimeout(fn, ms),
+    clearTimer: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+  });
+  /** Transactional session replacement: builds first, releases only on success. */
+  private readonly swap = new SessionSwap<GameSession>();
   /**
    * Owns the ordering between taking a backup and destroying what it backs
    * up. `inProgress` is what the reset checks before it advances anything.
@@ -524,7 +572,7 @@ class WebPlayer {
   private endSession(): void {
     this.cancelAuto();
     this.audio.stopAll();
-    this.session = null;
+    this.swap.set(null);
     this.skip = false;
     btn.skip.classList.remove("on");
     this.auto = false;
@@ -540,8 +588,11 @@ class WebPlayer {
     backlogEl.classList.add("hidden");
     menuEl.classList.add("hidden");
     settingsEl.classList.add("hidden");
-    movieEl.classList.add("hidden");
-    movieEl.pause();
+    // Settles the promise the loop is awaiting if a movie is on screen;
+    // merely hiding the element left the loop parked on it forever.
+    this.movies.stop();
+    this.ctx = newSessionContext();
+    this.rewindPoints.clear();
   }
 
   /** Leave the story and go back to the title screen. */
@@ -589,12 +640,15 @@ class WebPlayer {
       // A new run inherits whatever earlier runs unlocked - that is what
       // makes later playthroughs different, and it is scenario state, not a
       // save file.
-      this.autosaveGate.begin("new");
-      this.autosaveDue = false;
-      this.session = await GameSession.start(this.source, start, {
-        ...this.sessionOptions(),
-        initialVars: this.progress.seed(),
-      });
+      const fresh = newSessionContext();
+      fresh.gate.begin("new");
+      this.ctx = fresh;
+      this.swap.set(
+        await GameSession.start(this.source, start, {
+          ...this.sessionOptions(fresh),
+          initialVars: this.progress.seed(),
+        }),
+      );
     } catch (err) {
       this.showError(`could not start a new game: ${(err as Error).message}`);
       this.showTitle();
@@ -721,55 +775,81 @@ class WebPlayer {
    * parked on a waiter has to notice the swap, drop its stale event, and
    * carry on with the new session instead of deadlocking.
    */
-  private async resumeFrom(save: SessionSave, note: string, timeline?: RewindPoint): Promise<void> {
-    this.cancelAuto();
-    this.audio.stopAll();
-    this.stopMovie();
-    // Media queued by the timeline being abandoned must not fire into the new
-    // one: a movie about to play would otherwise be counted as evidence for
-    // an ending the player just rewound away from.
-    this.pendingOps = [];
-    // Park the current waiters aside: they are woken only after the session
-    // is swapped, so the running loop() sees the change, drops its stale
-    // event, and continues with the restored session (never deadlocks).
-    const wakeClick = this.clickWaiter;
-    const wakeChoice = this.choiceResolve;
-    this.clickWaiter = null;
-    this.choiceResolve = null;
-    choicesEl.classList.add("hidden");
-    backlogEl.classList.add("hidden");
-    menuEl.classList.add("hidden");
-    titleEl.classList.add("hidden");
-    try {
-      // Reset before the session exists: restore() enters a scene from inside
-      // this call, so the counter has to already be at 0 when its own
-      // onSceneChange arrives - otherwise that entry is numbered as a real
-      // transition and the next real one gets suppressed in its place.
-      this.autosaveGate.begin("restore");
-      this.autosaveDue = false;
-      this.session = await GameSession.restore(this.source, save, {
-        ...this.sessionOptions(),
-        // an older save must not roll global progression backwards
-        restoreOverrides: this.progress.reconcile(save.vars),
-      });
-      this.rewindPoints.clear(); // the new session's own history starts here
-      // A rewind keeps the evidence the run had legitimately accumulated by
-      // that line and discards what came after. A save file carries no movie
-      // evidence at all, so loading one starts that record empty.
-      const restored = timelineFor(timeline);
-      this.moviesPlayed = restored.moviesPlayed;
-      this.moviesSinceChoice = restored.moviesSinceChoice;
-      toast(note);
-      wakeClick?.();
-      wakeChoice?.(-1);
-      void this.loop();
-    } catch (err) {
-      toast(`load failed: ${(err as Error).message}`);
+  private async resumeFrom(
+    save: SessionSave,
+    note: string,
+    timeline?: RewindPoint,
+    /** Line the player rewound to; absent for a load, which starts a new history. */
+    rewoundTo?: number,
+  ): Promise<void> {
+    // The replacement's own context, so a failed build cannot disturb the
+    // counter or the queued media of the session still playing.
+    const next = newSessionContext();
+    next.gate.begin("restore");
+
+    const result = await this.swap.replace(
+      () =>
+        GameSession.restore(this.source, save, {
+          ...this.sessionOptions(next),
+          // an older save must not roll global progression backwards
+          restoreOverrides: this.progress.reconcile(save.vars),
+        }),
+      {
+        // Everything below runs only once the replacement exists.
+        release: () => {
+          this.cancelAuto();
+          this.audio.stopAll();
+          // Resolves whatever the loop is awaiting rather than orphaning it.
+          this.movies.stop();
+          this.ctx = next;
+          // A rewind keeps the evidence the run had accumulated by that line
+          // and drops what came after; a save file carries none at all, so
+          // loading one starts that record empty.
+          const restored = timelineFor(timeline);
+          this.moviesPlayed = restored.moviesPlayed;
+          this.moviesSinceChoice = restored.moviesSinceChoice;
+          // A rewind stays inside the same run, so the lines before the one
+          // chosen are still reachable and can be rewound to again; only the
+          // abandoned future goes. A load is a different history entirely.
+          if (rewoundTo === undefined) this.rewindPoints.clear();
+          else this.rewindPoints.truncateAfter(rewoundTo);
+          choicesEl.classList.add("hidden");
+          backlogEl.classList.add("hidden");
+          menuEl.classList.add("hidden");
+          titleEl.classList.add("hidden");
+        },
+        commit: () => {
+          // Park the waiters aside and wake them only now: the running loop
+          // then sees the swap, drops its stale event, and continues with the
+          // restored session instead of deadlocking.
+          const wakeClick = this.clickWaiter;
+          const wakeChoice = this.choiceResolve;
+          this.clickWaiter = null;
+          this.choiceResolve = null;
+          toast(note);
+          wakeClick?.();
+          wakeChoice?.(-1);
+          void this.loop();
+        },
+      },
+    );
+
+    if (!result.ok && !result.superseded) {
+      // Nothing was released: the line or choice on screen is still live and
+      // still answerable.
+      toast(`load failed: ${result.reason}`);
     }
   }
 
-  /** Shared by New Game and save restore - keeps hooks identical. */
-  private sessionOptions(): Parameters<typeof GameSession.start>[2] {
+
+  /**
+   * Hooks for one session, bound to that session's own context.
+   *
+   * Bound rather than reading `this.ctx`, so a replacement being built during
+   * a swap writes into its own context: if the build then fails, nothing it
+   * did leaks into the session that is still playing.
+   */
+  private sessionOptions(ctx: SessionContext): Parameters<typeof GameSession.start>[2] {
     return {
       onSceneChange: (scene) => {
         // Seeing a chapter is monotonic: a rewind never unsees it.
@@ -777,12 +857,12 @@ class WebPlayer {
         // Deferred rather than written here: restore() calls this from inside
         // its own scene entry, where the VM has no presented event yet. The
         // loop takes it once the next line is actually on screen.
-        if (this.autosaveGate.sceneEntered()) this.autosaveDue = true;
+        if (ctx.gate.sceneEntered()) ctx.autosaveDue = true;
       },
       vm: {
         onOp: (op) => {
-          if (op.op === "playSE") this.pendingOps.push({ op: "playSE", asset: op.asset, arg1: op.arg1 });
-          else if (op.op === "playMovie") this.pendingOps.push({ op: "playMovie", asset: op.asset });
+          if (op.op === "playSE") ctx.ops.push({ op: "playSE", asset: op.asset, arg1: op.arg1 });
+          else if (op.op === "playMovie") ctx.ops.push({ op: "playMovie", asset: op.asset });
         },
       },
     };
@@ -1173,7 +1253,8 @@ class WebPlayer {
     if (!session) return;
     const entry = session.backlog[index];
     if (!entry) return;
-    const point = this.rewindPoints.get(this.backlogOrdinal(session, index));
+    const ordinal = this.backlogOrdinal(session, index);
+    const point = this.rewindPoints.get(ordinal);
     if (!point) {
       // lines carried in from a loaded save have no VM state of their own
       toast("that line is from before this session was loaded");
@@ -1182,7 +1263,7 @@ class WebPlayer {
     // restore re-presents the saved line without re-logging it, so the log it
     // starts from must already contain that line
     const save: SessionSave = { ...point.save, backlog: session.backlog.slice(0, index + 1) };
-    await this.resumeFrom(save, `back to: ${this.chapterLabel(entry.scene)}`, point);
+    await this.resumeFrom(save, `back to: ${this.chapterLabel(entry.scene)}`, point, ordinal);
   }
 
   private toggleBacklog(): void {
@@ -1261,51 +1342,36 @@ class WebPlayer {
     hudEl.textContent = s ? this.chapterLabel(s.scene) : "";
   }
 
-  /** Tear down a movie that is on screen, so an abandoned one cannot linger. */
-  private stopMovie(): void {
-    movieEl.onended = null;
-    movieEl.onclick = null;
-    try {
-      movieEl.pause();
-    } catch {
-      /* not playing */
-    }
-    movieEl.classList.add("hidden");
-  }
-
   private async playMovie(name: string): Promise<void> {
     const url = `${this.assetsBase}/movies/${name.toLowerCase()}.mp4`;
-    const head = await fetch(url, { method: "HEAD" }).catch(() => null);
-    if (!head?.ok) {
-      speakerEl.textContent = "";
-      textEl.textContent = `[MOVIE: ${name}]`;
-      if (!this.skip) await this.waitAdvance();
-      return;
-    }
-    movieEl.src = url;
-    movieEl.classList.remove("hidden");
-    await movieEl.play().catch(() => {});
-    await new Promise<void>((resolve) => {
-      const done = (): void => {
-        movieEl.classList.add("hidden");
-        movieEl.pause();
-        resolve();
-      };
-      movieEl.onended = done;
-      movieEl.onclick = done;
-      if (this.skip) setTimeout(done, 400);
-    });
+    const outcome = await this.movies.play(url, { skipAfterMs: this.skip ? 400 : null });
+    if (outcome !== "missing") return;
+    // No movie file in this package: say so in the textbox and let the player
+    // move on, exactly as a line would.
+    speakerEl.textContent = "";
+    textEl.textContent = `[MOVIE: ${name}]`;
+    if (!this.skip) await this.waitAdvance();
   }
 
   /** Resolver of the currently displayed choice, if any (woken on load). */
   private choiceResolve: ((option: number) => void) | null = null;
 
-  private pendingOps: { op: string; asset?: string; arg1?: number | null }[] = [];
 
-  private async flushOps(): Promise<void> {
-    const ops = this.pendingOps;
-    this.pendingOps = [];
+
+  /**
+   * Play the media the session queued while producing its next event.
+   *
+   * Guarded per operation, not just on entry: a movie in the middle of the
+   * queue is awaited, and the player can return to the title or load a save
+   * during it. Everything after that point belongs to a session that no
+   * longer exists and must not be played, counted as ending evidence, or
+   * recorded as seen.
+   */
+  private async flushOps(session: GameSession): Promise<void> {
+    const ops = this.ctx.ops;
+    this.ctx.ops = [];
     for (const op of ops) {
+      if (this.session !== session) return;
       if (op.op === "playSE" && op.asset) {
         const entry = this.assets.get(op.asset);
         if (entry) {
@@ -1319,6 +1385,7 @@ class WebPlayer {
         this.moviesSinceChoice.push(op.asset.toLowerCase());
         this.moviesPlayed.add(op.asset.toLowerCase());
         await this.playMovie(op.asset);
+        if (this.session !== session) return;
       }
       if (op.asset) this.tracker?.asset(op.asset);
     }
@@ -1348,13 +1415,13 @@ class WebPlayer {
         // A rewind may have landed while next() was in flight; its ops belong
         // to a timeline that no longer exists.
         if (this.session !== session) continue;
-        await this.flushOps();
+        await this.flushOps(session);
         if (this.session !== session) continue;
         if (ev.type === "dialogue") {
           this.trackEvent(ev);
           this.noteRewindPoint(session);
-          if (this.autosaveDue) {
-            this.autosaveDue = false;
+          if (this.ctx.autosaveDue) {
+            this.ctx.autosaveDue = false;
             void this.saveToSlot(AUTO_SLOT);
           }
           this.audio.setBgm(

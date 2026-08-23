@@ -70,7 +70,29 @@ export class RewindLog {
     return this.points.get(ordinal);
   }
 
-  /** A restored session's history starts over: nothing before it is reachable. */
+  /**
+   * Drop the future the player just abandoned, keeping the line they went
+   * back to and everything before it.
+   *
+   * This is what separates a rewind from a load. A rewind stays inside the
+   * same run, so the earlier lines are still reachable and rewinding twice -
+   * to line 100, then to line 80 - has to work. Clearing the whole log
+   * instead made the first rewind the last one.
+   *
+   * Returns how many points were discarded.
+   */
+  truncateAfter(ordinal: number): number {
+    let dropped = 0;
+    for (const key of [...this.points.keys()]) {
+      if (key > ordinal) {
+        this.points.delete(key);
+        dropped++;
+      }
+    }
+    return dropped;
+  }
+
+  /** A loaded save is a different history: nothing from before it is reachable. */
   clear(): void {
     this.points.clear();
   }
