@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Web KID Engine: environment-independent VN execution (scene VM, sessions, saves)",
   "type": "module",
-  "license": "MIT",
+  "license": "GPL-2.0-or-later",
   "exports": {
     ".": "./src/index.ts",
     "./node": "./src/node.ts"

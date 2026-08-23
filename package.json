@@ -1,6 +1,7 @@
 {
   "name": "ever17-workspace",
   "private": true,
+  "license": "GPL-2.0-or-later",
   "type": "module",
   "workspaces": [
     "packages/*",

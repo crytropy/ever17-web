@@ -1,0 +1,14 @@
+ever17-web
+Copyright (C) 2026 Empathy117
+
+This repository includes a TypeScript reimplementation of file-format
+algorithms researched and implemented by the e17p / Infinity Engine
+Reimplementation Project:
+
+  e17p
+  Copyright (C) 2010 Sebastian Hagen and Svein Ove Aas
+  License: GNU General Public License, version 2 or later
+  Source: https://github.com/uyjulian/e17p
+
+No Ever17 game data is included. Ever17 and its original content remain the
+property of their respective rights holders.

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Ever17 (KID engine) LNK/SC3 scenario parser, disassembler and decompiler",
   "type": "module",
-  "license": "MIT",
+  "license": "GPL-2.0-or-later",
   "exports": {
     ".": "./src/index.ts",
     "./lnk": "./src/lnk/parser.ts",

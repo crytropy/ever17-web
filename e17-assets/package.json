@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Ever17 (KID engine) CPS image and WAF audio decoders",
   "type": "module",
-  "license": "MIT",
+  "license": "GPL-2.0-or-later",
   "exports": {
     ".": "./src/index.ts",
     "./cps": "./src/cps/index.ts",

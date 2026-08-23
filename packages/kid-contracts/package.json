@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Web KID Engine: versioned, JSON-safe contracts shared by the engine, adapters and tools",
   "type": "module",
-  "license": "MIT",
+  "license": "GPL-2.0-or-later",
   "exports": {
     ".": "./src/index.ts",
     "./ir": "./src/ir.ts",

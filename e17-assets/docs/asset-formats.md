@@ -9,7 +9,7 @@ what is *inside* the entries.
 
 Prior art: the algorithms below were re-derived and re-implemented against
 [uyjulian/e17p](https://github.com/uyjulian/e17p) (Sebastian Hagen / Svein Ove
-Aas, GPL), a Python reimplementation of the Infinity engine. Our TypeScript
+Aas, GPL-2.0-or-later), a Python reimplementation of the Infinity engine. Our TypeScript
 decoders are validated byte-for-byte against an independent port of that
 reference (see "Validation" below).
 

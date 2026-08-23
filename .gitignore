@@ -5,6 +5,9 @@
 # copyrighted game files - never track or redistribute)
 /.local/
 /build/
+/.direnv/
+/.scratch/
+/*-savedata-*.json
 dumps/
 output/
 

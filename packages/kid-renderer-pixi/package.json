@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Web KID Engine: Pixi presentation renderer over PresentationState",
   "type": "module",
-  "license": "MIT",
+  "license": "GPL-2.0-or-later",
   "exports": {
     ".": "./src/index.ts"
   },

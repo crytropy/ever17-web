@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "ever17-web: play Ever17 in the browser from your own PC installation",
   "type": "module",
-  "license": "MIT",
+  "license": "GPL-2.0-or-later",
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
