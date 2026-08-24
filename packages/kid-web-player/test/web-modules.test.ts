@@ -91,7 +91,9 @@ describe("save slots", () => {
   });
 
   it("rejects unknown slot names", () => {
-    expect(() => new SaveSlots(mockStorage(), NS).put("99", fakeSave())).toThrow(/unknown slot/);
+    expect(() => new SaveSlots(mockStorage(), NS).put("100", fakeSave())).toThrow(/unknown slot/);
+    expect(() => new SaveSlots(mockStorage(), NS).put("nope", fakeSave())).toThrow(/unknown slot/);
+    expect(() => new SaveSlots(mockStorage(), NS).put("99", fakeSave())).not.toThrow();
     expect(ALL_SLOTS).toContain("auto");
   });
 
@@ -246,7 +248,7 @@ describe("records module is safe for the game bundle to import", () => {
   it("importing it touches no page and starts no work", async () => {
     const mod = await import("../src/records.js");
     expect(typeof mod.groupDiscoveredChapters).toBe("function");
-    expect(typeof mod.endingCardsFor).toBe("function");
+    expect(typeof mod.endingsFor).toBe("function");
     expect(typeof mod.renderRecordsInto).toBe("function");
   });
 

@@ -16,7 +16,21 @@ export interface SlotMeta {
   thumb?: string;
 }
 
-export const MANUAL_SLOTS = ["1", "2", "3", "4", "5", "6", "7", "8"] as const;
+/**
+ * Numbered save slots, in numeric order.
+ *
+ * Ninety-nine because a visual novel is replayed, and a player who is
+ * tracking several routes at once runs out of eight quickly. Built as a range
+ * rather than a literal list so the order is numeric - a lexical sort would
+ * put slot 10 between 1 and 2.
+ *
+ * The cost is bounded: a save is about 24 KB, nearly all of it the dialogue
+ * backlog, so a completely full set is roughly 2.4 MB against the ~5 MB a
+ * browser gives an origin. Slot writes already fall back to dropping the
+ * thumbnail if a quota is hit.
+ */
+export const MANUAL_SLOT_COUNT = 99;
+export const MANUAL_SLOTS: readonly string[] = Array.from({ length: MANUAL_SLOT_COUNT }, (_, i) => String(i + 1));
 export const AUTO_SLOT = "auto";
 export const QUICK_SLOT = "quick";
 export const ALL_SLOTS: readonly string[] = [AUTO_SLOT, QUICK_SLOT, ...MANUAL_SLOTS];

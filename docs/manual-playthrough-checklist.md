@@ -136,8 +136,10 @@ Worth a quick check once per play session rather than once per line.
 - [ ] Save, then Load, returns to exactly the same line
 - [ ] Returning to the title and back does not lose a save
 - [ ] CONTINUE names the chapter you actually left off in
+- [ ] Saving into a high slot number (say 90) works and reloads
 - [ ] RECORDS shows only chapters and endings you have reached
 - [ ] RECORDS never names a route you have not entered yet
+- [ ] RECORDS never says how many endings exist, only whether any remain
 - [ ] No red errors in the browser console
 
 ## Issue blocks

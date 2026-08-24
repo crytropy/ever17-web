@@ -159,7 +159,7 @@ describe("import", () => {
   it("ignores unknown slot names", () => {
     const s = mockStorage();
     const doc = buildPlayerDataExport(ctx(mockStorage()), null);
-    doc.slots = [{ slot: "99", meta: { slot: "99", label: "x", savedAt: 1, scene: "t_1a", lines: 1 }, save: fakeSave("t_1a", 1) }];
+    doc.slots = [{ slot: "100", meta: { slot: "100", label: "x", savedAt: 1, scene: "t_1a", lines: 1 }, save: fakeSave("t_1a", 1) }];
     expect(applyPlayerDataImport(ctx(s), doc).slotsRestored).toBe(0);
   });
 

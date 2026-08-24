@@ -10,7 +10,9 @@
  *   - a viewpoint appears once a chapter told from it has been visited;
  *   - a route appears once the player has been inside it;
  *   - a day appears once visited;
- *   - an ending shows its name only once collected, otherwise a locked card;
+ *   - an ending appears only once collected, and unreached ones are not
+ *     listed at all - a row of locked placeholders would count the endings
+ *     out for a player who has not agreed to know how many there are;
  *   - a route the player has never entered is never named, so a later,
  *     unlocked route cannot be spoiled by the imported data containing it.
  *
@@ -108,6 +110,14 @@ export function groupDiscoveredChapters(
   return groups;
 }
 
+/** What the records screen may say about endings. */
+export interface EndingsView {
+  /** Endings actually reached, in the roster's order. */
+  found: EndingCard[];
+  /** True while the roster still holds something unreached - never how many. */
+  more: boolean;
+}
+
 export interface EndingCard {
   /** Present only once collected; a locked card carries no name. */
   name: string | null;
@@ -116,32 +126,36 @@ export interface EndingCard {
 }
 
 /**
- * Ending cards for the records screen: the game's own roster in order, each
- * named only once the player has collected it, plus anything collected that
- * the roster never listed.
+ * What to show under "endings": the ones actually reached, in the roster's
+ * order, plus anything collected that the roster never listed.
+ *
+ * The roster's size is deliberately not part of the answer. A locked card per
+ * unreached ending is a count, and a count is the shape of the story - how
+ * many routes there are to find, and how far from done you are. `more` says
+ * only whether anything remains.
  */
-export function endingCardsFor(
+export function endingsFor(
   catalog: NarrativeProgressCatalog,
   collected: Iterable<string>,
-): EndingCard[] {
+): EndingsView {
   const collectedIds = [...collected];
   const resolved = new Set(
     collectedIds.map((id) => endingById(catalog, id)?.id).filter((id): id is string => id !== undefined),
   );
-  const cards: EndingCard[] = catalog.endings.map((e) => ({
-    name: resolved.has(e.id) ? e.name : null,
-    collected: resolved.has(e.id),
-    endingId: e.id,
-  }));
+  // Roster order, but only the ones actually reached: a locked placeholder
+  // per unreached ending would count them out for the player.
+  const found: EndingCard[] = catalog.endings
+    .filter((e) => resolved.has(e.id))
+    .map((e) => ({ name: e.name, collected: true, endingId: e.id }));
   for (const id of collectedIds) {
     if (endingById(catalog, id)) continue; // already in the roster
     const label = labelForScene(catalog, id);
-    cards.push({
+    found.push({
       name: label.shortLabel !== catalog.fallbackLabel ? label.shortLabel : "结局",
       collected: true,
     });
   }
-  return cards;
+  return { found, more: catalog.endings.some((e) => !resolved.has(e.id)) };
 }
 
 /**
@@ -201,13 +215,22 @@ function renderEndings(
   collected: ReadonlySet<string>,
 ): void {
   content.appendChild(el("h2", undefined, "结局"));
+  const view = endingsFor(catalog, collected);
+  if (view.found.length === 0) {
+    content.appendChild(el("p", "empty", "还没有收录任何结局。"));
+    return;
+  }
   const cards = el("div", "cards");
-  for (const card of endingCardsFor(catalog, collected)) {
-    const node = el("div", card.collected ? "card" : "card locked");
+  for (const card of view.found) {
+    const node = el("div", "card");
     node.tabIndex = 0;
-    node.appendChild(el("div", "title", card.name ?? "?????"));
-    node.appendChild(el("div", "meta", card.collected ? "已收录" : "未收录"));
+    node.appendChild(el("div", "title", card.name ?? "结局"));
+    node.appendChild(el("div", "meta", "已收录"));
     cards.appendChild(node);
   }
   content.appendChild(cards);
+  // Whether anything remains, never how much: a count is the shape of the
+  // story, and a player who has seen one ending has not agreed to know how
+  // many more there are.
+  content.appendChild(el("p", "empty", view.more ? "还有尚未发现的结局。" : "已收录全部结局。"));
 }

@@ -140,6 +140,10 @@ there with the variables it had at the time. Lines carried in from a loaded
 save are shown but not clickable: the save records where you were, not the
 route you took to get there, so there is no earlier moment to return to.
 
+**Saving.** Ninety-nine numbered slots, plus a quicksave (`Q`) and an
+autosave written at each scene change. A full save is about 24 KB, so even a
+complete set stays well inside what a browser gives one site.
+
 **Your progress is yours.** Saves, settings, cross-run progress and the
 records screen live in the browser. Settings → PLAYER DATA exports all of it
 to a JSON file and imports it back - useful before clearing site data, or to
@@ -177,8 +181,10 @@ write into the new one. Data written before generations existed is generation
 0 and is read in place - nothing is copied or deleted to migrate it.
 
 **Records, not a graph.** `/records` is the player-facing screen: chapters you
-have visited, days you have played, endings you have collected, with anything
-unreached left blank. The full technical route graph is still available for
+have visited, days you have played, endings you have collected. Nothing you
+have not reached is listed - not even as a blank - because a row of locked
+placeholders is a count, and how many endings a story has is part of the
+story. It says only whether anything remains. The full technical route graph is still available for
 development at `/debug/routes` - it shows the whole game and will spoil it.
 
 **Reporting playthrough bugs.** Full validation of all eight endings is

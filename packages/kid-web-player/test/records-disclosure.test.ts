@@ -5,7 +5,7 @@ import {
   labelForScene,
   type NarrativeProgressCatalog,
 } from "kid-contracts";
-import { endingCardsFor, groupDiscoveredChapters } from "../src/records.js";
+import { endingsFor, groupDiscoveredChapters } from "../src/records.js";
 
 /**
  * The records screen must never show a player something they have not
@@ -62,8 +62,6 @@ const routeIds = (visited: string[]): string[] =>
   groupDiscoveredChapters(catalog, visited).flatMap((g) => g.routes.map((r) => r.routeId));
 const viewpointIds = (visited: string[]): string[] =>
   groupDiscoveredChapters(catalog, visited).map((g) => g.viewpointId);
-const endingNames = (collected: string[]): (string | null)[] =>
-  endingCardsFor(catalog, collected).map((c) => c.name);
 
 describe("chapter disclosure", () => {
   it("shows nothing before the player has been anywhere", () => {
@@ -143,32 +141,51 @@ describe("chapter disclosure", () => {
 });
 
 describe("ending disclosure", () => {
-  it("shows a locked card for every uncollected ending in the roster", () => {
-    expect(endingNames([])).toEqual([null, null]);
-    expect(endingCardsFor(catalog, []).every((c) => !c.collected)).toBe(true);
+  const names = (collected: string[]): (string | null)[] => endingsFor(catalog, collected).found.map((c) => c.name);
+
+  it("lists nothing at all before the player has reached one", () => {
+    const view = endingsFor(catalog, []);
+    expect(view.found, "no placeholders to count").toEqual([]);
+    expect(view.more).toBe(true);
   });
 
-  it("names an ending only once collected, and resolves movie codes", () => {
-    expect(endingNames(["END_HA00"])).toEqual(["Hazel · Ending", null]);
-    expect(endingNames(["end_ha00", "END_WR00"])).toEqual(["Hazel · Ending", "Wren · Ending"]);
+  it("never reveals how many endings the game has", () => {
+    // the roster holds two; a player who has found one must not be able to
+    // infer the second from the screen
+    for (const collected of [[], ["END_HA00"]]) {
+      const view = endingsFor(catalog, collected);
+      expect(view.found.length, "only what was reached").toBe(collected.length);
+      expect(view.found.length).toBeLessThan(catalog.endings.length);
+    }
   });
 
-  it("keeps the roster's length so the screen does not shift", () => {
-    expect(endingCardsFor(catalog, ["END_HA00"])).toHaveLength(catalog.endings.length);
+  it("names an ending once collected, and resolves movie codes", () => {
+    expect(names(["END_HA00"])).toEqual(["Hazel · Ending"]);
+    expect(names(["end_ha00", "END_WR00"])).toEqual(["Hazel · Ending", "Wren · Ending"]);
   });
 
-  it("adds a card for an ending the roster never listed, once reached", () => {
-    const cards = endingCardsFor(catalog, ["finale"]);
-    expect(cards).toHaveLength(catalog.endings.length + 1);
-    expect(cards[cards.length - 1]).toMatchObject({ collected: true, name: "Finale" });
+  it("keeps the roster's order rather than the order they were found in", () => {
+    expect(names(["END_WR00", "END_HA00"])).toEqual(["Hazel · Ending", "Wren · Ending"]);
+  });
+
+  it("says whether anything remains, never how much", () => {
+    expect(endingsFor(catalog, []).more).toBe(true);
+    expect(endingsFor(catalog, ["END_HA00"]).more).toBe(true);
+    expect(endingsFor(catalog, ["END_HA00", "END_WR00"]).more, "all found").toBe(false);
+  });
+
+  it("adds an ending the roster never listed, once reached", () => {
+    const view = endingsFor(catalog, ["finale"]);
+    expect(view.found).toHaveLength(1);
+    expect(view.found[0]).toMatchObject({ collected: true, name: "Finale" });
   });
 
   it("ignores an unknown id rather than showing an identifier", () => {
-    const cards = endingCardsFor(catalog, ["not_a_thing"]);
+    const view = endingsFor(catalog, ["not_a_thing"]);
     // the screen's own word for "ending" - the point is that the raw id is
     // never what a player sees, whatever the interface language is
-    expect(cards[cards.length - 1]!.name).toBe("结局");
-    expect(JSON.stringify(cards)).not.toContain("not_a_thing");
+    expect(view.found.at(-1)!.name).toBe("结局");
+    expect(JSON.stringify(view)).not.toContain("not_a_thing");
   });
 });
 

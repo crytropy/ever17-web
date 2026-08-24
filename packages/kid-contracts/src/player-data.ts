@@ -69,7 +69,8 @@ export const PLAYER_DATA_LIMITS = {
    * so a huge file cannot cost a tab's memory just to be parsed and rejected.
    */
   maxFileBytes: 32 * 1024 * 1024,
-  maxSlots: 64,
+  /** 99 numbered slots plus the quicksave and the autosave, with headroom. */
+  maxSlots: 128,
   maxSlotNameLength: 32,
   maxLabelLength: 200,
   maxBacklogEntries: 5000,
