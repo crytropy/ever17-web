@@ -7,7 +7,7 @@
  */
 
 /** Version of the scene-IR JSON shape. Bump on incompatible changes. */
-export const IR_SCHEMA_VERSION = 1;
+export const IR_SCHEMA_VERSION = 2;
 
 /** Comparison in a VAR_JUMP row. Relations 0x0c (eq) and 0x0d (ne) are the
  * common ones; 0x0f/0x10/0x11 are the rare relational route gates. */
@@ -41,7 +41,16 @@ export type IrOp =
   | { op: "sceneMarker"; id: number }
   | { op: "setBackground"; asset: string | null; resource: number; fade: number | null; arg2: number | null; variant?: string }
   | { op: "showSprite"; asset: string | null; resource: number; slot: number | null; x: number | null; mode: number | null }
-  | { op: "showSprites"; sprites: { asset: string | null; resource: number; x: number | null }[]; mode: number | null }
+  | {
+    op: "showSprites";
+    sprites: {
+      asset: string | null;
+      resource: number;
+      slot: number | null;
+      x: number | null;
+    }[];
+    mode: number | null;
+  }
   | { op: "hideSprite"; slot: number | null; mode: number | null }
   | { op: "fillScreen"; color: number | null; fade: number | null; plane: number | null }
   | { op: "playSE"; asset: string; arg1: number | null; volume: number | null }

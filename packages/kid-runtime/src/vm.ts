@@ -323,6 +323,15 @@ export class SceneVm {
     });
   }
 
+  // Ever17 SET_BG clears all character art before displaying the new background.
+  this.state.sprites.clear();
+
+  this.actions.push({
+    kind: "hideSprite",
+    slot: null,
+    mode: 0,
+  });
+
   this.state.background = this.layerFor(op.asset, null, null);
   this.state.fill = null;
   this.state.cg = null; // a new background replaces the CG on screen
@@ -356,11 +365,18 @@ export class SceneVm {
 
         case "showSprites": {
           op.sprites.forEach((s, i) => {
-            const slot = i + 1;
+            const slot = s.slot ?? (i === 2 ? 4 : i + 1);
             const layer = this.layerFor(s.asset, slot, s.x);
+
             this.state.sprites.set(slot, layer);
-            this.actions.push({ kind: "showSprite", layer: { ...layer }, mode: op.mode });
+
+            this.actions.push({
+              kind: "showSprite",
+              layer: { ...layer },
+              mode: op.mode,
+            });
           });
+
           break;
         }
 

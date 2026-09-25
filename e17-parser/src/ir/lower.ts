@@ -328,35 +328,74 @@ function lowerInstruction(
     case "SET_SPRITE_2": {
       const resA = operandU16(ops[3]) ?? -1;
       const resB = operandU16(ops[5]) ?? -1;
+
       return [
         {
           op: "showSprites",
           sprites: [
-            { asset: resourceName(file, resA), resource: resA, x: operandImm(ops[6]) },
-            { asset: resourceName(file, resB), resource: resB, x: operandImm(ops[7]) },
+            {
+              asset: resourceName(file, resA),
+              resource: resA,
+              slot: operandImm(ops[0]),
+              x: operandImm(ops[6]),
+            },
+            {
+              asset: resourceName(file, resB),
+              resource: resB,
+              slot: operandImm(ops[1]),
+              x: operandImm(ops[7]),
+            },
           ],
           mode: operandImm(ops[8]),
         },
       ];
     }
+
     case "SET_SPRITE_3": {
       const resA = operandU16(ops[1]) ?? -1;
       const resB = operandU16(ops[3]) ?? -1;
       const resC = operandU16(ops[5]) ?? -1;
+
       return [
         {
           op: "showSprites",
           sprites: [
-            { asset: resourceName(file, resA), resource: resA, x: operandImm(ops[6]) },
-            { asset: resourceName(file, resB), resource: resB, x: operandImm(ops[7]) },
-            { asset: resourceName(file, resC), resource: resC, x: operandImm(ops[8]) },
+            {
+              asset: resourceName(file, resA),
+              resource: resA,
+              slot: 1,
+              x: operandImm(ops[6]),
+            },
+            {
+              asset: resourceName(file, resB),
+              resource: resB,
+              slot: 2,
+              x: operandImm(ops[7]),
+            },
+            {
+              asset: resourceName(file, resC),
+              resource: resC,
+              slot: 4,
+              x: operandImm(ops[8]),
+            },
           ],
           mode: operandImm(ops[9]),
         },
       ];
     }
+
     case "CLEAR_SPRITE":
       return [{ op: "hideSprite", slot: operandImm(ops[0]), mode: operandImm(ops[1]) }];
+
+    case "op_1013":
+      // Observed as a full character-art clear; the first operand remains not fully understood.
+      return [
+        {
+          op: "hideSprite",
+          slot: null,
+          mode: operandImm(ops[1]),
+        },
+      ];
     case "FILL_SCREEN":
       return [
         {

@@ -366,12 +366,17 @@ if (!resolved && assetKind === "image") {
     const data = readFileSync(looseCps);
 
     resolved = {
+      name: `${name}.cps`,
       archive: "graph/bg",
+      kind: "image",
+      format: "cps",
       entry: {
         name: `${name}.cps`,
+        offset: 0,
+        size: data.length,
+        compressed: false,
         data,
       },
-      format: "cps",
     };
   }
 }
