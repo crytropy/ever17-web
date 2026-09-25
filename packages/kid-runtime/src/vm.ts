@@ -307,32 +307,29 @@ export class SceneVm {
         }
 
         case "setBackground": {
-  // KID SET_BG's last operand is a plane value (observed as 1 or 2).
-  // In the affected scene, plane 1 follows a zoomed viewport and starts a
-  // new full-screen picture sequence. Reset the camera before drawing it.
-  if (op.arg2 === 1) {
-    this.state.viewport = null;
+          // A new Ever17 background starts with the full image; any previous
+          // background pan/zoom does not carry over to the replacement background.
+          this.state.viewport = null;
 
-    this.actions.push({
-      kind: "viewportRect",
-      x: 0,
-      y: 0,
-      w: this.profile.canvas.width,
-      h: this.profile.canvas.height,
-      frames: 0,
-    });
-  }
+          this.actions.push({
+            kind: "viewportRect",
+            x: 0,
+            y: 0,
+            w: this.profile.canvas.width,
+            h: this.profile.canvas.height,
+            frames: 0,
+          });
 
-  // Ever17 SET_BG clears all character art before displaying the new background.
-  this.state.sprites.clear();
+          // Ever17 SET_BG clears all character art before displaying the new background.
+          this.state.sprites.clear();
 
-  this.actions.push({
-    kind: "hideSprite",
-    slot: null,
-    mode: 0,
-  });
+          this.actions.push({
+            kind: "hideSprite",
+            slot: null,
+            mode: 0,
+          });
 
-  this.state.background = this.layerFor(op.asset, null, null);
+          this.state.background = this.layerFor(op.asset, null, null);
   this.state.fill = null;
   this.state.cg = null; // a new background replaces the CG on screen
 
