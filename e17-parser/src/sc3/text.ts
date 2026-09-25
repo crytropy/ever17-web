@@ -73,7 +73,7 @@ const decoders = new Map<TextEncoding, InstanceType<typeof TextDecoder>>();
  * reproduces the original spacing. Other circled numbers are left alone -
  * debug.scr uses ⑩⑪⑫ literally in a font test string.
  */
-const PRIVATE_SPACE = /[\u2473\u2487\uF279]/g;
+const PRIVATE_SPACE = /[\u2473\u2487\uE8AA\uEEB8\uEEEE\uF279]/g;
 
 export function decodeDbcs(raw: Buffer, encoding: TextEncoding): string {
   let d = decoders.get(encoding);
@@ -81,7 +81,11 @@ export function decodeDbcs(raw: Buffer, encoding: TextEncoding): string {
     d = new TextDecoder(encoding, { fatal: false });
     decoders.set(encoding, d);
   }
-  return d.decode(raw).replace(PRIVATE_SPACE, "\u3000");
+   return d.decode(raw)
+    .replace(PRIVATE_SPACE, "\u3000")
+    .replace(/\uEC6A/g, "♪")
+    .replace(/\uF26F/g, "ä")
+    .replace(/\uF270/g, "ö");
 }
 
 /** Read a run of text bytes (stops at control bytes < 0x20). */
