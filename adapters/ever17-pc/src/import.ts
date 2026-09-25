@@ -356,11 +356,30 @@ function buildPackage(ctx: BuildContext): GamePackageMeta {
     const [kind, lowerName] = [key.slice(0, key.indexOf(":")), key.slice(key.indexOf(":") + 1)];
     const assetKind = kind as "image" | "audio";
     const name = logicalName.get(key) ?? lowerName;
-    const resolved = lib.resolve(lowerName, assetKind);
-    if (!resolved) {
-      noteMissing(key, name, kind, "");
-      continue;
-    }
+ let resolved = lib.resolve(lowerName, assetKind);
+
+// 光譜資訊繁中版有部分圖片以 loose CPS 形式放在 graph\bg
+if (!resolved && assetKind === "image") {
+  const looseCps = join(opts.gameDir, "graph", "bg", `${name}.cps`);
+
+  if (existsSync(looseCps)) {
+    const data = readFileSync(looseCps);
+
+    resolved = {
+      archive: "graph/bg",
+      entry: {
+        name: `${name}.cps`,
+        data,
+      },
+      format: "cps",
+    };
+  }
+}
+
+if (!resolved) {
+  noteMissing(key, name, kind, "");
+  continue;
+}
     const base = lowerName.replace(/\.[^.]+$/, "");
     try {
       if (assetKind === "image") {

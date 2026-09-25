@@ -307,17 +307,35 @@ export class SceneVm {
         }
 
         case "setBackground": {
-          this.state.background = this.layerFor(op.asset, null, null);
-          this.state.fill = null;
-          this.state.cg = null; // a new background replaces the CG on screen
-          this.actions.push({
-            kind: "setBackground",
-            layer: { ...this.state.background },
-            fade: op.fade,
-            ...(op.variant !== undefined ? { variant: op.variant } : {}),
-          });
-          break;
-        }
+  // KID SET_BG's last operand is a plane value (observed as 1 or 2).
+  // In the affected scene, plane 1 follows a zoomed viewport and starts a
+  // new full-screen picture sequence. Reset the camera before drawing it.
+  if (op.arg2 === 1) {
+    this.state.viewport = null;
+
+    this.actions.push({
+      kind: "viewportRect",
+      x: 0,
+      y: 0,
+      w: this.profile.canvas.width,
+      h: this.profile.canvas.height,
+      frames: 0,
+    });
+  }
+
+  this.state.background = this.layerFor(op.asset, null, null);
+  this.state.fill = null;
+  this.state.cg = null; // a new background replaces the CG on screen
+
+  this.actions.push({
+    kind: "setBackground",
+    layer: { ...this.state.background },
+    fade: op.fade,
+    ...(op.variant !== undefined ? { variant: op.variant } : {}),
+  });
+
+  break;
+}
 
         case "fillScreen": {
           this.state.fill = op.color;

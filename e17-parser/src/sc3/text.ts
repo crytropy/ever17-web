@@ -47,7 +47,7 @@ export interface ParsedTextChunk {
   warnings: string[];
 }
 
-export type TextEncoding = "gbk" | "shift_jis";
+export type TextEncoding = "gbk" | "big5" | "shift_jis";
 
 const decoders = new Map<TextEncoding, InstanceType<typeof TextDecoder>>();
 
@@ -73,7 +73,7 @@ const decoders = new Map<TextEncoding, InstanceType<typeof TextDecoder>>();
  * reproduces the original spacing. Other circled numbers are left alone -
  * debug.scr uses ⑩⑪⑫ literally in a font test string.
  */
-const PRIVATE_SPACE = /[\u2473\u2487]/g;
+const PRIVATE_SPACE = /[\u2473\u2487\uF279]/g;
 
 export function decodeDbcs(raw: Buffer, encoding: TextEncoding): string {
   let d = decoders.get(encoding);
@@ -253,5 +253,5 @@ export function parseTextChunk(
 /** Guess the text encoding for a script by its name (debug scripts are SJIS
  * in this release, story scripts GBK). */
 export function encodingForScript(name: string): TextEncoding {
-  return name.toLowerCase().startsWith("debug") ? "shift_jis" : "gbk";
+  return name.toLowerCase().startsWith("debug") ? "shift_jis" : "big5";
 }
