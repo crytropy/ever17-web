@@ -301,6 +301,22 @@ it("records a completed standalone bad end by its scene id", () => {
     name: "North · Bad Ending",
   });
 });
+
+it("uses the earlier character route to name a viewpoint-only bad end", () => {
+  const refined = {
+    ...catalog,
+    endings: [...catalog.endings, { id: "hazel-bad", name: "Hazel · Bad Ending", routeId: "hazel" }],
+  } satisfies NarrativeProgressCatalog;
+
+  expect(endingForCompletedRoute(refined, ["intro", "nh6a", "nbare", "finale"])).toMatchObject({
+    id: "hazel-bad",
+  });
+  expect(
+    endingsFor(refined, [], ["nh6a", "nbare"], [], [["intro", "nh6a", "nbare", "finale"]]).found,
+  ).toEqual([
+    { name: "Hazel · Bad Ending", collected: true, endingId: "hazel-bad" },
+  ]);
+});
 });
 
 describe("labels", () => {
