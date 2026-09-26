@@ -125,8 +125,26 @@ export function endingForCompletedRoute(
 ): EndingProgressDefinition | null {
   const scenes = [...route].map((scene) => scene.toLowerCase());
   for (let i = scenes.length - 1; i >= 0; i -= 1) {
-    const label = catalog.scenes[scenes[i]!];
-    if (!label?.routeId) continue;
+    const scene = scenes[i]!;
+    const label = catalog.scenes[scene];
+    if (!label) continue;
+
+    // Some source menus name a genuine bad-end chapter only by viewpoint
+    // rather than by a character route. It has no routeId to map into the
+    // roster, but once the session has actually finished the scene itself is
+    // a stable, player-facing ending id.
+    if (
+      label.kind === "badEnd" &&
+      !label.routeId &&
+      label.shortLabel !== catalog.fallbackLabel
+    ) {
+      return {
+        id: scene,
+        name: label.shortLabel,
+      };
+    }
+
+    if (!label.routeId) continue;
 
     const grade =
       label.kind === "badEnd" ? "bad" :
@@ -205,9 +223,18 @@ export interface EndingCard {
     [...visited].map((scene) => scene.toLowerCase()),
   );
 
+  const standaloneBadEnds = new Map<string, string>();
+
   for (const scene of visitedScenes) {
     const label = catalog.scenes[scene];
-    if (!label || label.kind !== "badEnd" || !label.routeId) continue;
+    if (!label || label.kind !== "badEnd") continue;
+
+    if (!label.routeId) {
+      if (label.shortLabel !== catalog.fallbackLabel) {
+        standaloneBadEnds.set(scene, label.shortLabel);
+      }
+      continue;
+    }
 
     const ending = catalog.endings.find(
       (e) =>
@@ -226,9 +253,27 @@ export interface EndingCard {
       endingId: e.id,
     }));
 
+  // A bad-end chapter can be official player-facing data even when the
+  // developer ending roster gives it no route id. Keep it as its own ending
+  // instead of discarding it or exposing an internal Y_ED#... id.
+  for (const [scene, name] of standaloneBadEnds) {
+    found.push({
+      name,
+      collected: true,
+      endingId: scene,
+    });
+  }
+
+  const alreadyFound = new Set(
+    found
+      .map((card) => card.endingId?.toLowerCase())
+      .filter((id): id is string => id !== undefined),
+  );
+
   // 舊技術 id（例如 Y_ED#11）不再產生假的「結局」卡。
   for (const id of collectedIds) {
     if (endingById(catalog, id)) continue;
+    if (alreadyFound.has(id.toLowerCase())) continue;
 
     const label = labelForScene(catalog, id);
     if (label.shortLabel === catalog.fallbackLabel) continue;
@@ -236,6 +281,7 @@ export interface EndingCard {
     found.push({
       name: label.shortLabel,
       collected: true,
+      endingId: id,
     });
   }
 
