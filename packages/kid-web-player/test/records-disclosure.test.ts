@@ -180,13 +180,67 @@ describe("ending disclosure", () => {
     expect(view.found[0]).toMatchObject({ collected: true, name: "Finale" });
   });
 
-  it("ignores an unknown id rather than showing an identifier", () => {
-    const view = endingsFor(catalog, ["not_a_thing"]);
-    // the screen's own word for "ending" - the point is that the raw id is
-    // never what a player sees, whatever the interface language is
-    expect(view.found.at(-1)!.name).toBe("结局");
-    expect(JSON.stringify(view)).not.toContain("not_a_thing");
-  });
+  it("ignores an unknown internal ending id completely", () => {
+  const view = endingsFor(catalog, ["not_a_thing"]);
+
+  expect(view.found).toEqual([]);
+  expect(JSON.stringify(view)).not.toContain("not_a_thing");
+});
+it("recovers a collected ending from a discovered ending movie", () => {
+  const view = endingsFor(
+    catalog,
+    ["Y_ED#11"],
+    [],
+    ["end_ha00"],
+  );
+
+  expect(view.found).toEqual([
+    {
+      name: "Hazel · Ending",
+      collected: true,
+      endingId: "hazel-good",
+    },
+  ]);
+});
+
+it("recovers a bad ending from a visited bad-end scene", () => {
+  const withBadEnd: NarrativeProgressCatalog = {
+    ...catalog,
+    scenes: {
+      ...catalog.scenes,
+      nbad: {
+        shortLabel: "Hazel · Bad Ending",
+        kind: "badEnd",
+        viewpointId: "north",
+        viewpoint: "North",
+        routeId: "hazel",
+      },
+    },
+    endings: [
+      ...catalog.endings,
+      {
+        id: "hazel-bad",
+        name: "Hazel · Bad Ending",
+        routeId: "hazel",
+      },
+    ],
+  };
+
+  const view = endingsFor(
+    withBadEnd,
+    ["Y_ED#12"],
+    ["nbad"],
+    [],
+  );
+
+  expect(view.found).toEqual([
+    {
+      name: "Hazel · Bad Ending",
+      collected: true,
+      endingId: "hazel-bad",
+    },
+  ]);
+});
 });
 
 describe("labels", () => {

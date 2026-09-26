@@ -134,28 +134,81 @@ export interface EndingCard {
  * many routes there are to find, and how far from done you are. `more` says
  * only whether anything remains.
  */
-export function endingsFor(
+	export function endingsFor(
   catalog: NarrativeProgressCatalog,
   collected: Iterable<string>,
+  visited: Iterable<string> = [],
+  discoveredAssets: Iterable<string> = [],
 ): EndingsView {
   const collectedIds = [...collected];
+
+  // 已經直接以正式 ending id / alias 記錄的結局。
   const resolved = new Set(
-    collectedIds.map((id) => endingById(catalog, id)?.id).filter((id): id is string => id !== undefined),
+    collectedIds
+      .map((id) => endingById(catalog, id)?.id)
+      .filter((id): id is string => id !== undefined),
   );
-  // Roster order, but only the ones actually reached: a locked placeholder
-  // per unreached ending would count them out for the player.
+
+  // 舊版可能只記下 Y_ED#... 這類技術 id。
+  // 已實際播放過的結局 movie 是可靠證據。
+  const assets = new Set(
+    [...discoveredAssets].map((a) => a.toLowerCase()),
+  );
+
+  for (const ending of catalog.endings) {
+    if (
+      (ending.aliases ?? []).some((alias) =>
+        assets.has(alias.toLowerCase()),
+      )
+    ) {
+      resolved.add(ending.id);
+    }
+  }
+
+  // 沒有專屬 movie 的 bad end，
+  // 由玩家真正走過的 badEnd 場景還原。
+  const visitedScenes = new Set(
+    [...visited].map((scene) => scene.toLowerCase()),
+  );
+
+  for (const scene of visitedScenes) {
+    const label = catalog.scenes[scene];
+    if (!label || label.kind !== "badEnd" || !label.routeId) continue;
+
+    const ending = catalog.endings.find(
+      (e) =>
+        e.routeId === label.routeId &&
+        e.id.toLowerCase().endsWith("-bad"),
+    );
+
+    if (ending) resolved.add(ending.id);
+  }
+
   const found: EndingCard[] = catalog.endings
     .filter((e) => resolved.has(e.id))
-    .map((e) => ({ name: e.name, collected: true, endingId: e.id }));
+    .map((e) => ({
+      name: e.name,
+      collected: true,
+      endingId: e.id,
+    }));
+
+  // 舊技術 id（例如 Y_ED#11）不再產生假的「結局」卡。
   for (const id of collectedIds) {
-    if (endingById(catalog, id)) continue; // already in the roster
+    if (endingById(catalog, id)) continue;
+
     const label = labelForScene(catalog, id);
+    if (label.shortLabel === catalog.fallbackLabel) continue;
+
     found.push({
-      name: label.shortLabel !== catalog.fallbackLabel ? label.shortLabel : "结局",
+      name: label.shortLabel,
       collected: true,
     });
   }
-  return { found, more: catalog.endings.some((e) => !resolved.has(e.id)) };
+
+  return {
+    found,
+    more: catalog.endings.some((e) => !resolved.has(e.id)),
+  };
 }
 
 /**
@@ -170,6 +223,7 @@ export function renderRecordsInto(
   catalog: NarrativeProgressCatalog | null,
   visited: ReadonlySet<string>,
   collected: ReadonlySet<string>,
+  discoveredAssets: ReadonlySet<string>,
 ): void {
   content.replaceChildren();
   if (!catalog) {
@@ -177,7 +231,7 @@ export function renderRecordsInto(
     return;
   }
   renderChapters(content, catalog, visited);
-  renderEndings(content, catalog, collected);
+  renderEndings(content, catalog, collected, visited, discoveredAssets);
 }
 
 function renderChapters(
@@ -213,9 +267,11 @@ function renderEndings(
   content: HTMLElement,
   catalog: NarrativeProgressCatalog,
   collected: ReadonlySet<string>,
+  visited: ReadonlySet<string>,
+  discoveredAssets: ReadonlySet<string>,
 ): void {
   content.appendChild(el("h2", undefined, "结局"));
-  const view = endingsFor(catalog, collected);
+  const view = endingsFor(catalog, collected, visited, discoveredAssets);
   if (view.found.length === 0) {
     content.appendChild(el("p", "empty", "还没有收录任何结局。"));
     return;

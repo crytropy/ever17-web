@@ -41,7 +41,7 @@ import { PlayerDataBackup } from "./backup.js";
 import { migrateSave } from "kid-contracts";
 import { LoadingIndicator } from "./loading-indicator.js";
 import { computeAutoAdvanceDelay } from "./auto-timing.js";
-import { renderRecordsInto } from "./records.js";
+import { endingsFor, renderRecordsInto } from "./records.js";
 import { AutoAdvanceTimer } from "./auto-timer.js";
 import {
   RewindLog,
@@ -486,12 +486,13 @@ class WebPlayer {
     this.autoTimer.cancel();
     // The tracker's in-memory view is already current; the flush is only for
     // durability, so the screen does not need to wait for it.
-    renderRecordsInto(
-      recordsContentEl,
-      this.catalog,
-      new Set(this.tracker?.scenes ?? []),
-      new Set(this.tracker?.endings ?? []),
-    );
+	renderRecordsInto(
+	recordsContentEl,
+	this.catalog,
+	new Set(this.tracker?.scenes ?? []),
+	new Set(this.tracker?.endings ?? []),
+	new Set(this.tracker?.assets ?? []),
+ );
     recordsEl.classList.remove("hidden");
     void this.tracker?.flush().catch(() => {
       /* the screen is drawn from memory either way */
@@ -508,20 +509,55 @@ class WebPlayer {
   /** Award endings by the graph's own definitions (scene + dispatch
    * conditions on the final variables + movie evidence); fall back to the
    * movie/scene name when the graph is unavailable. */
-  private async recordEnding(session: GameSession, endScene: string): Promise<void> {
+private async recordEnding(session: GameSession, endScene: string): Promise<void> {
+  // Prefer player-facing canonical ending ids from the narrative catalog.
+  // This avoids recording internal graph ids such as Y_ED#11 as if they were
+  // separate endings.
+  if (this.catalog) {
     this.graphJson ??= fetch("graph.json")
       .then((r) => (r.ok ? (r.json() as Promise<RouteGraphJson>) : null))
       .catch(() => null);
+
     const graph = await this.graphJson;
     const matched = graph
       ? matchEndings(graph.endings, endScene, session.vars, this.moviesPlayed)
       : [];
-    if (matched.length > 0) {
-      for (const e of matched) this.tracker?.ending(e.id);
-    } else {
-      this.tracker?.ending(this.moviesSinceChoice[0] ?? endScene);
+
+    const view = endingsFor(
+      this.catalog,
+      matched.map((e) => e.id),
+      this.tracker?.scenes ?? [endScene],
+      this.moviesPlayed,
+    );
+
+    const endingIds = view.found
+      .map((card) => card.endingId)
+      .filter((id): id is string => id !== undefined);
+
+    for (const id of endingIds) {
+      this.tracker?.ending(id);
     }
+
+    // A narrative catalog exists, so do not fall back to internal graph ids.
+    return;
   }
+
+  // Generic fallback for games/packages without a narrative catalog.
+  this.graphJson ??= fetch("graph.json")
+    .then((r) => (r.ok ? (r.json() as Promise<RouteGraphJson>) : null))
+    .catch(() => null);
+
+  const graph = await this.graphJson;
+  const matched = graph
+    ? matchEndings(graph.endings, endScene, session.vars, this.moviesPlayed)
+    : [];
+
+  if (matched.length > 0) {
+    for (const e of matched) this.tracker?.ending(e.id);
+  } else {
+    this.tracker?.ending(this.moviesSinceChoice[0] ?? endScene);
+  }
+}
 
   // ------------------------------------------------ settings
   private openSettings(): void {

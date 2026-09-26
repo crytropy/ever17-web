@@ -30,8 +30,9 @@ async function main(): Promise<void> {
   const ns = meta?.profile.storageNamespace ?? "kidvn";
   const scope = readActiveScope(localStorage, ns);
   const tracker = await CompletionTracker.open(new IdbCompletionStore(scope.completionDb)).catch(() => null);
-  const visited = new Set(tracker?.scenes ?? []);
-  const collected = new Set(tracker?.endings ?? []);
+const visited = new Set(tracker?.scenes ?? []);
+const collected = new Set(tracker?.endings ?? []);
+const discoveredAssets = new Set(tracker?.assets ?? []);
 
   // "last played" comes from the newest save, so it survives a reload
   try {
@@ -45,7 +46,13 @@ async function main(): Promise<void> {
     /* storage unavailable: the rest of the page still renders */
   }
 
-  renderRecordsInto($("content"), catalog, visited, collected);
+  renderRecordsInto(
+  $("content"),
+  catalog,
+  visited,
+  collected,
+  discoveredAssets,
+);
 }
 
 void main();
