@@ -24,6 +24,7 @@
 import {
   labelForScene,
   endingById,
+  type EndingProgressDefinition,
   type NarrativeProgressCatalog,
   type SceneProgressLabel,
 } from "kid-contracts";
@@ -110,6 +111,58 @@ export function groupDiscoveredChapters(
   return groups;
 }
 
+/**
+ * Resolve one canonical ending from a route that is known to have completed.
+ *
+ * Unlike the records screen's cross-run visited-scene recovery, this is only
+ * called after GameSession has emitted a real ending. That makes an epilogue
+ * safe evidence for a GOOD ending without crediting a player who merely
+ * entered an epilogue and quit before the run finished.
+ */
+export function endingForCompletedRoute(
+  catalog: NarrativeProgressCatalog,
+  route: Iterable<string>,
+): EndingProgressDefinition | null {
+  const scenes = [...route].map((scene) => scene.toLowerCase());
+
+  for (let i = scenes.length - 1; i >= 0; i -= 1) {
+    const scene = scenes[i]!;
+    const label = catalog.scenes[scene];
+    if (!label) continue;
+
+    if (label.kind === "badEnd") {
+      // Viewpoint-only bad-end scenes may be aliases of a canonical shared
+      // ending (Ever17's Takeshi-side Tsugumi/Sora bad end).
+      const byScene = endingById(catalog, scene);
+      if (byScene) return byScene;
+
+      if (label.routeId) {
+        const ending = catalog.endings.find(
+          (e) =>
+            e.routeId === label.routeId &&
+            e.id.toLowerCase().endsWith("-bad"),
+        );
+        if (ending) return ending;
+      }
+
+      if (label.shortLabel !== catalog.fallbackLabel) {
+        return { id: scene, name: label.shortLabel };
+      }
+    }
+
+    if (label.kind === "epilogue" && label.routeId) {
+      const ending = catalog.endings.find(
+        (e) =>
+          e.routeId === label.routeId &&
+          e.id.toLowerCase().endsWith("-good"),
+      );
+      if (ending) return ending;
+    }
+  }
+
+  return null;
+}
+
 /** What the records screen may say about endings. */
 export interface EndingsView {
   /** Endings actually reached, in the roster's order. */
@@ -171,9 +224,21 @@ export interface EndingCard {
     [...visited].map((scene) => scene.toLowerCase()),
   );
 
+  const standaloneBadEnds = new Map<string, string>();
+
   for (const scene of visitedScenes) {
     const label = catalog.scenes[scene];
-    if (!label || label.kind !== "badEnd" || !label.routeId) continue;
+    if (!label || label.kind !== "badEnd") continue;
+
+    if (!label.routeId) {
+      const canonical = endingById(catalog, scene);
+      if (canonical) {
+        resolved.add(canonical.id);
+      } else if (label.shortLabel !== catalog.fallbackLabel) {
+        standaloneBadEnds.set(scene, label.shortLabel);
+      }
+      continue;
+    }
 
     const ending = catalog.endings.find(
       (e) =>
@@ -192,9 +257,27 @@ export interface EndingCard {
       endingId: e.id,
     }));
 
+  // A bad-end chapter can be official player-facing data even when the
+  // developer ending roster gives it no route id. Keep it as its own ending
+  // instead of discarding it or exposing an internal Y_ED#... id.
+  for (const [scene, name] of standaloneBadEnds) {
+    found.push({
+      name,
+      collected: true,
+      endingId: scene,
+    });
+  }
+
+  const alreadyFound = new Set(
+    found
+      .map((card) => card.endingId?.toLowerCase())
+      .filter((id): id is string => id !== undefined),
+  );
+
   // 舊技術 id（例如 Y_ED#11）不再產生假的「結局」卡。
   for (const id of collectedIds) {
     if (endingById(catalog, id)) continue;
+    if (alreadyFound.has(id.toLowerCase())) continue;
 
     const label = labelForScene(catalog, id);
     if (label.shortLabel === catalog.fallbackLabel) continue;
@@ -202,6 +285,7 @@ export interface EndingCard {
     found.push({
       name: label.shortLabel,
       collected: true,
+      endingId: id,
     });
   }
 

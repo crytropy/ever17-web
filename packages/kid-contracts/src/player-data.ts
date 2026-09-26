@@ -384,6 +384,14 @@ function validateStoredCompletion(completion: unknown): string | null {
     if (list.length > PLAYER_DATA_LIMITS.maxCompletionEntries) return `the file's ${field} is too large`;
     if (!list.every((e) => isBoundedString(e, 256))) return `the file's ${field} contains something that is not a name`;
   }
+  const visitedLines = completion["visitedLines"];
+  if (visitedLines !== undefined) {
+    if (!Array.isArray(visitedLines)) return "the file's visitedLines is malformed";
+    if (visitedLines.length > PLAYER_DATA_LIMITS.maxCompletionEntries) return "the file's visitedLines is too large";
+    if (!visitedLines.every((e) => isBoundedString(e, 256))) {
+      return "the file's visitedLines contains something that is not a name";
+    }
+  }
   return null;
 }
 

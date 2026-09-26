@@ -138,6 +138,7 @@ function isCompletionState(v: unknown): v is CompletionState {
   return (
     c.version === 1 &&
     Array.isArray(c.visitedScenes) &&
+    (c.visitedLines === undefined || Array.isArray(c.visitedLines)) &&
     Array.isArray(c.visitedChoices) &&
     Array.isArray(c.endings) &&
     Array.isArray(c.discoveredAssets)
@@ -150,6 +151,7 @@ export function mergeCompletion(a: CompletionState | null, b: CompletionState): 
   return {
     version: 1,
     visitedScenes: union(a?.visitedScenes, b.visitedScenes),
+    visitedLines: union(a?.visitedLines, b.visitedLines),
     visitedChoices: union(a?.visitedChoices, b.visitedChoices),
     endings: union(a?.endings, b.endings),
     discoveredAssets: union(a?.discoveredAssets, b.discoveredAssets),

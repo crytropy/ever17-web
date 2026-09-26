@@ -1,6 +1,6 @@
 /**
- * Persistent completion state: which scenes, choices, endings and assets the
- * player has seen across every playthrough. Deliberately separate from
+ * Persistent completion state: which scenes, dialogue lines, choices, endings
+ * and assets the player has seen across every playthrough. Deliberately separate from
  * gameplay saves - loading an old save never rewinds completion - and stored
  * in IndexedDB rather than localStorage (it grows with the asset list).
  *
@@ -10,6 +10,11 @@
 export interface CompletionState {
   version: 1;
   visitedScenes: string[];
+  /**
+   * Stable dialogue ids. Optional for compatibility with completion data
+   * written before per-line read tracking existed.
+   */
+  visitedLines?: string[];
   /** "<scene>:<choiceKey>:<option>" - the option actually taken. */
   visitedChoices: string[];
   endings: string[];
@@ -19,10 +24,21 @@ export interface CompletionState {
 export const EMPTY_COMPLETION: CompletionState = {
   version: 1,
   visitedScenes: [],
+  visitedLines: [],
   visitedChoices: [],
   endings: [],
   discoveredAssets: [],
 };
+
+/** Stable id for one presented scenario line. */
+export function dialogueLineId(
+  scene: string,
+  block: string,
+  textIndex: number,
+  segment: number,
+): string {
+  return `${scene.toLowerCase()}:${block.toLowerCase()}:${textIndex}:${segment}`;
+}
 
 export interface CompletionStore {
   load(): Promise<CompletionState | null>;
@@ -94,6 +110,7 @@ export class IdbCompletionStore implements CompletionStore {
 /** In-memory sets over a store, with debounced persistence. */
 export class CompletionTracker {
   readonly scenes = new Set<string>();
+  readonly lines = new Set<string>();
   readonly choices = new Set<string>();
   readonly endings = new Set<string>();
   readonly assets = new Set<string>();
@@ -107,6 +124,7 @@ export class CompletionTracker {
     const state = await store.load().catch(() => null);
     if (state) {
       for (const s of state.visitedScenes) t.scenes.add(s);
+      for (const l of state.visitedLines ?? []) t.lines.add(l);
       for (const c of state.visitedChoices) t.choices.add(c);
       for (const e of state.endings) t.endings.add(e);
       for (const a of state.discoveredAssets) t.assets.add(a);
@@ -116,6 +134,12 @@ export class CompletionTracker {
 
   scene(id: string): void {
     this.mark(this.scenes, id.toLowerCase());
+  }
+  hasLine(id: string): boolean {
+    return this.lines.has(id.toLowerCase());
+  }
+  line(id: string): void {
+    this.mark(this.lines, id.toLowerCase());
   }
   choice(scene: string, choiceKey: string | number, option: number): void {
     this.mark(this.choices, `${scene.toLowerCase()}:${choiceKey}:${option}`);
@@ -143,6 +167,7 @@ export class CompletionTracker {
    */
   absorb(state: CompletionState): void {
     for (const s of state.visitedScenes) this.mark(this.scenes, s);
+    for (const l of state.visitedLines ?? []) this.mark(this.lines, l);
     for (const c of state.visitedChoices) this.mark(this.choices, c);
     for (const e of state.endings) this.mark(this.endings, e);
     for (const a of state.discoveredAssets) this.mark(this.assets, a);
@@ -152,6 +177,7 @@ export class CompletionTracker {
     return {
       version: 1,
       visitedScenes: [...this.scenes].sort(),
+      visitedLines: [...this.lines].sort(),
       visitedChoices: [...this.choices].sort(),
       endings: [...this.endings].sort(),
       discoveredAssets: [...this.assets].sort(),

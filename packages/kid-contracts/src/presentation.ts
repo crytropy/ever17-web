@@ -79,6 +79,13 @@ export interface DialogueEvent {
   type: "dialogue";
   speaker: string | null;
   text: string;
+  /**
+   * Stable source coordinates of this line inside the scene IR. Optional so
+   * older/custom PlayerEvent producers remain compatible; the runtime emits
+   * both for every scenario dialogue line.
+   */
+  textIndex?: number;
+  segment?: number;
   voice: string | null;
   voiceFile: string | null;
   state: SceneStateSnapshot;
