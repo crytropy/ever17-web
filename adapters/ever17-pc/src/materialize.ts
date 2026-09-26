@@ -33,7 +33,11 @@ import {
 
 /** What the materializer needs from the asset archives (injectable for tests). */
 export interface AssetSource {
-  resolve(name: string, kind: "image" | "audio"): ResolvedAsset | undefined;
+  resolve(
+    name: string,
+    kind: "image" | "audio",
+    opts?: { archive?: string },
+  ): ResolvedAsset | undefined;
 }
 
 export interface MaterializeDeps {
@@ -108,7 +112,9 @@ export function createAssetMaterializer(
     const outPath = join(assetsDir, rel);
     if (existsSync(outPath)) return outPath;
 
-    const resolved = source.resolve(entry.name, entry.kind);
+    const resolved = source.resolve(entry.name, entry.kind, {
+  archive: entry.archive,
+});
     if (!resolved) {
       throw new AssetConversionError(entry.name, entry.archive, "not present in the source archives");
     }

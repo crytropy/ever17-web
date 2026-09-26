@@ -353,39 +353,21 @@ function buildPackage(ctx: BuildContext): GamePackageMeta {
   };
 
   for (const key of seen) {
-    const [kind, lowerName] = [key.slice(0, key.indexOf(":")), key.slice(key.indexOf(":") + 1)];
+    const [kind, lowerName] = [
+      key.slice(0, key.indexOf(":")),
+      key.slice(key.indexOf(":") + 1),
+    ];
     const assetKind = kind as "image" | "audio";
     const name = logicalName.get(key) ?? lowerName;
- let resolved = lib.resolve(lowerName, assetKind);
+    const resolved = lib.resolve(lowerName, assetKind);
 
-// 光譜資訊繁中版有部分圖片以 loose CPS 形式放在 graph\bg
-if (!resolved && assetKind === "image") {
-  const looseCps = join(opts.gameDir, "graph", "bg", `${name}.cps`);
+    if (!resolved) {
+      noteMissing(key, name, kind, "");
+      continue;
+    }
 
-  if (existsSync(looseCps)) {
-    const data = readFileSync(looseCps);
-
-    resolved = {
-      name: `${name}.cps`,
-      archive: "graph/bg",
-      kind: "image",
-      format: "cps",
-      entry: {
-        name: `${name}.cps`,
-        offset: 0,
-        size: data.length,
-        compressed: false,
-        data,
-      },
-    };
-  }
-}
-
-if (!resolved) {
-  noteMissing(key, name, kind, "");
-  continue;
-}
     const base = lowerName.replace(/\.[^.]+$/, "");
+
     try {
       if (assetKind === "image") {
         const m = parseCpsMeta(resolved.entry.data);
@@ -408,7 +390,9 @@ if (!resolved) {
           file: `audio/${base}.wav`,
           channels: RAW_PCM_CHANNELS,
           sampleRate: RAW_PCM_SAMPLE_RATE,
-          duration: Number((bytes / 2 / RAW_PCM_CHANNELS / RAW_PCM_SAMPLE_RATE).toFixed(3)),
+          duration: Number(
+            (bytes / 2 / RAW_PCM_CHANNELS / RAW_PCM_SAMPLE_RATE).toFixed(3),
+          ),
         };
       } else {
         const w = parseWaf(resolved.entry.data);

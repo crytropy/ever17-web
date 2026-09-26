@@ -129,7 +129,26 @@ export function discoverInstallation(gameDir: string): Ever17Installation {
   } else {
     warnings.push("no movie/ directory - ending movies will show a text placeholder");
   }
+  // Official PC patches install replacement CPS images outside bg.dat.
+  // They are real importer inputs and therefore must participate in the
+  // installation fingerprint, otherwise a patched image could reuse a stale
+  // converted package.
+  const looseBgDir = join(gameDir, "graph", "bg");
+  if (existsSync(looseBgDir) && statSync(looseBgDir).isDirectory()) {
+    for (const name of readdirSync(looseBgDir)
+      .filter((f) => f.toLowerCase().endsWith(".cps"))
+      .sort()) {
+      const path = join(looseBgDir, name);
+      if (!statSync(path).isFile()) continue;
 
+      files.push({
+        name: `graph/bg/${name}`,
+        size: statSync(path).size,
+        required: false,
+        role: "loose patch image (CPS override)",
+      });
+    }
+  }
   for (const m of missing) {
     problems.push(`missing required file: ${m.name} (${m.role})`);
   }

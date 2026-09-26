@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, statSync, utimesSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   DigestIndex,
   FINGERPRINT_ALGO,
@@ -10,7 +10,7 @@ import {
   hashFileChunked,
   type FingerprintSource,
 } from "../src/fingerprint.js";
-
+import { discoverInstallation, expectedFiles } from "../src/discover.js";
 /**
  * Fingerprinting is what stands between a changed installation and a stale
  * converted package, so these tests use synthetic installations with content
@@ -30,7 +30,11 @@ afterEach(() => {
 /** A fake installation: named files with the given contents. */
 function fakeInstall(files: Record<string, string>, movies: Record<string, string> = {}): FingerprintSource {
   const dir = tempDir();
-  for (const [name, body] of Object.entries(files)) writeFileSync(join(dir, name), body);
+    for (const [name, body] of Object.entries(files)) {
+    const path = join(dir, name);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, body);
+  }
   if (Object.keys(movies).length > 0) {
     mkdirSync(join(dir, "movie"), { recursive: true });
     for (const [name, body] of Object.entries(movies)) writeFileSync(join(dir, "movie", name), body);
@@ -41,7 +45,25 @@ function fakeInstall(files: Record<string, string>, movies: Record<string, strin
     movieFiles: Object.keys(movies),
   };
 }
+function fakeLnk(entries: { name: string; data: Buffer }[] = []): Buffer {
+  const header = Buffer.alloc(16);
+  header.write("LNK\0", 0, "latin1");
+  header.writeUInt32LE(entries.length, 4);
 
+  const index = Buffer.alloc(entries.length * 32);
+  const blobs: Buffer[] = [];
+  let offset = 0;
+
+  entries.forEach((entry, i) => {
+    index.writeUInt32LE(offset, i * 32);
+    index.writeUInt32LE(entry.data.length << 1, i * 32 + 4);
+    index.write(entry.name, i * 32 + 8, "latin1");
+    blobs.push(entry.data);
+    offset += entry.data.length;
+  });
+
+  return Buffer.concat([header, index, ...blobs]);
+}
 describe("chunked hashing", () => {
   it("matches a known SHA-256 and streams files larger than one chunk", () => {
     const dir = tempDir();
@@ -63,6 +85,37 @@ describe("chunked hashing", () => {
 });
 
 describe("installation fingerprint", () => {
+	it("discovers loose patch CPS files and fingerprints them", () => {
+  const dir = tempDir();
+
+  for (const spec of expectedFiles()) {
+    if (spec.name.endsWith("/")) continue;
+
+    const body =
+      spec.name === "script.dat"
+        ? fakeLnk([{ name: "op00.scr", data: Buffer.from("X") }])
+        : fakeLnk();
+
+    writeFileSync(join(dir, spec.name), body);
+  }
+
+  const looseDir = join(dir, "graph", "bg");
+  mkdirSync(looseDir, { recursive: true });
+  writeFileSync(join(looseDir, "ev_et04a.cps"), "PATCHED");
+
+  const inst = discoverInstallation(dir);
+
+  expect(inst.problems).toEqual([]);
+  expect(inst.files.map((f) => f.name)).toContain(
+    "graph/bg/ev_et04a.cps",
+  );
+
+  const fp = fingerprintInstallation(inst);
+
+  expect(fp.files.map((f) => f.path)).toContain(
+    "graph/bg/ev_et04a.cps",
+  );
+});
   it("is stable for an unchanged installation", () => {
     const inst = fakeInstall({ "script.dat": "SCRIPT", "bg.dat": "IMAGES" });
     const a = fingerprintInstallation(inst);
@@ -82,7 +135,22 @@ describe("installation fingerprint", () => {
     expect(statSync(bg).size).toBe(6);
     expect(fingerprintInstallation(inst).fingerprint).not.toBe(before);
   });
+it("changes when a loose patch CPS changes at the same size", () => {
+  const inst = fakeInstall({
+    "script.dat": "S",
+    "graph/bg/ev_et04a.cps": "AAAAAA",
+  });
 
+  const before = fingerprintInstallation(inst).fingerprint;
+
+  const cps = join(inst.gameDir, "graph", "bg", "ev_et04a.cps");
+  expect(statSync(cps).size).toBe(6);
+
+  writeFileSync(cps, "BBBBBB");
+  expect(statSync(cps).size).toBe(6);
+
+  expect(fingerprintInstallation(inst).fingerprint).not.toBe(before);
+});
   it("changes when a same-size movie changes", () => {
     const inst = fakeInstall({ "script.dat": "S" }, { "end_tu00.e17": "MOVIE1" });
     const before = fingerprintInstallation(inst).fingerprint;

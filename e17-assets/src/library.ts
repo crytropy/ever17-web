@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { parseLnk } from "e17-parser/lnk";
 import type { LnkArchive, LnkEntry } from "e17-parser";
@@ -51,6 +51,48 @@ export class AssetLibrary {
   /** Every archive a base name appears in, in ARCHIVES order. */
   private readonly byName = new Map<string, ResolvedAsset[]>();
   private indexed = new Set<string>();
+
+  private looseImages: Map<string, string> | null = null;
+
+  /**
+   * Official PC patches place replacement CPS files in graph/bg.
+   * These override same-named images stored in bg.dat.
+   */
+  private resolveLooseImage(logicalName: string): ResolvedAsset | undefined {
+    const base = logicalName.toLowerCase().replace(/\.[^.]+$/, "");
+
+    if (this.looseImages === null) {
+      this.looseImages = new Map<string, string>();
+
+      const dir = join(this.gameDir, "graph", "bg");
+      if (existsSync(dir)) {
+        for (const file of readdirSync(dir)) {
+          if (!file.toLowerCase().endsWith(".cps")) continue;
+          const key = file.toLowerCase().replace(/\.cps$/, "");
+          this.looseImages.set(key, file);
+        }
+      }
+    }
+
+    const file = this.looseImages.get(base);
+    if (!file) return undefined;
+
+    const data = readFileSync(join(this.gameDir, "graph", "bg", file));
+
+    return {
+      name: file,
+      archive: "graph/bg",
+      kind: "image",
+      format: "cps",
+      entry: {
+        name: file,
+        offset: 0,
+        size: data.length,
+        compressed: false,
+        data,
+      },
+    };
+  }
 
   constructor(gameDir: string) {
     this.gameDir = gameDir;
@@ -117,6 +159,14 @@ export class AssetLibrary {
   ): ResolvedAsset | undefined {
     const base = logicalName.toLowerCase().replace(/\.[^.]+$/, "");
     const key = `${kind}:${base}`;
+	  // Official patch images in graph/bg override the copies inside bg.dat.
+  if (kind === "image" && (!opts.archive || opts.archive === "graph/bg")) {
+    const loose = this.resolveLooseImage(base);
+    if (loose) return loose;
+
+    // The caller explicitly requested graph/bg and it was not there.
+    if (opts.archive === "graph/bg") return undefined;
+  }
     for (const spec of ARCHIVES) {
       if (spec.kind !== kind) continue;
       if (opts.archive && spec.file !== opts.archive) continue;

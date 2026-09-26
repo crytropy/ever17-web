@@ -22,7 +22,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, ren
 import { dirname, join, resolve } from "node:path";
 
 /** Bumping this invalidates every cached fingerprint and forces re-import. */
-export const FINGERPRINT_ALGO = "e17-fp-2";
+export const FINGERPRINT_ALGO = "e17-fp-3";
 
 const DIGEST_INDEX_FORMAT = "e17-digest-index";
 const DIGEST_INDEX_VERSION = 1;
