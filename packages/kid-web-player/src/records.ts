@@ -124,42 +124,41 @@ export function endingForCompletedRoute(
   route: Iterable<string>,
 ): EndingProgressDefinition | null {
   const scenes = [...route].map((scene) => scene.toLowerCase());
+  let standaloneBadEnd: { id: string; name: string } | null = null;
+
   for (let i = scenes.length - 1; i >= 0; i -= 1) {
     const scene = scenes[i]!;
     const label = catalog.scenes[scene];
     if (!label) continue;
 
-    // Some source menus name a genuine bad-end chapter only by viewpoint
-    // rather than by a character route. It has no routeId to map into the
-    // roster, but once the session has actually finished the scene itself is
-    // a stable, player-facing ending id.
-    if (
-      label.kind === "badEnd" &&
-      !label.routeId &&
-      label.shortLabel !== catalog.fallbackLabel
-    ) {
-      return {
-        id: scene,
-        name: label.shortLabel,
-      };
+    if (label.kind === "epilogue" && label.routeId) {
+      const ending = catalog.endings.find(
+        (e) => e.routeId === label.routeId && e.id.toLowerCase().endsWith("-good"),
+      );
+      if (ending) return ending;
     }
 
-    if (!label.routeId) continue;
+    if (label.kind === "badEnd") {
+      if (label.routeId) {
+        const ending = catalog.endings.find(
+          (e) => e.routeId === label.routeId && e.id.toLowerCase().endsWith("-bad"),
+        );
+        if (ending) return ending;
+      } else if (label.shortLabel !== catalog.fallbackLabel) {
+        standaloneBadEnd ??= { id: scene, name: label.shortLabel };
+      }
+      continue;
+    }
 
-    const grade =
-      label.kind === "badEnd" ? "bad" :
-      label.kind === "epilogue" ? "good" :
-      null;
-    if (!grade) continue;
-
-    const ending = catalog.endings.find(
-      (e) =>
-        e.routeId === label.routeId &&
-        e.id.toLowerCase().endsWith(`-${grade}`),
-    );
-    if (ending) return ending;
+    if (standaloneBadEnd && label.routeId) {
+      const ending = catalog.endings.find(
+        (e) => e.routeId === label.routeId && e.id.toLowerCase().endsWith("-bad"),
+      );
+      if (ending) return ending;
+    }
   }
-  return null;
+
+  return standaloneBadEnd;
 }
 
 /** What the records screen may say about endings. */
