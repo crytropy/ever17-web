@@ -26,7 +26,7 @@ import { PixiStage } from "kid-renderer-pixi";
 import { loadConfig, saveConfig, type VnConfig } from "./config.js";
 import { ALL_SLOTS, AUTO_SLOT, QUICK_SLOT, SaveSlots, type SlotMeta } from "./slots.js";
 import type { SessionSave } from "kid-contracts";
-import { CompletionTracker, IdbCompletionStore } from "./completion.js";
+import { CompletionTracker, IdbCompletionStore, dialogueLineId } from "./completion.js";
 import { PersistentProgress } from "./progress.js";
 import {
   activePlayDataKey,
@@ -611,6 +611,7 @@ private async recordEnding(session: GameSession, endScene: string): Promise<void
     titleEl.classList.remove("hidden");
     hudEl.textContent = "";
     speakerEl.textContent = "";
+    textEl.classList.remove("read");
     textEl.textContent = "";
   }
 
@@ -1443,6 +1444,7 @@ private async recordEnding(session: GameSession, endScene: string): Promise<void
     // No movie file in this package: say so in the textbox and let the player
     // move on, exactly as a line would.
     speakerEl.textContent = "";
+    textEl.classList.remove("read");
     textEl.textContent = `[MOVIE: ${name}]`;
     if (!this.skip) await this.waitAdvance();
   }
@@ -1535,8 +1537,15 @@ private async recordEnding(session: GameSession, endScene: string): Promise<void
             }) ?? Promise.resolve(),
           );
           if (this.session !== session) continue; // a load replaced the session
+          const lineId =
+            ev.textIndex !== undefined && ev.segment !== undefined
+              ? dialogueLineId(session.scene, ev.state.block, ev.textIndex, ev.segment)
+              : null;
+          const wasRead = lineId ? (this.tracker?.hasLine(lineId) ?? false) : false;
+          textEl.classList.toggle("read", wasRead);
           speakerEl.textContent = ev.speaker ?? "";
           textEl.textContent = ev.text;
+          if (lineId) this.tracker?.line(lineId);
           if (!this.skip) {
             this.audio.playVoice(ev.voiceFile ? `${this.assetsBase}/${ev.voiceFile}` : null);
           }
@@ -1564,6 +1573,7 @@ private async recordEnding(session: GameSession, endScene: string): Promise<void
         // sessionEnd
         this.audio.stopAll();
         speakerEl.textContent = "";
+        textEl.classList.remove("read");
         textEl.textContent =
           (ev.reason === "ending" ? "— FIN —" : `— ${ev.reason} —`) + "\n\nTITLE (T) returns to the title screen.";
         // Only a story that actually reached its ending counts. Ever17
