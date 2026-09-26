@@ -41,7 +41,7 @@ import { PlayerDataBackup } from "./backup.js";
 import { migrateSave } from "kid-contracts";
 import { LoadingIndicator } from "./loading-indicator.js";
 import { computeAutoAdvanceDelay } from "./auto-timing.js";
-import { endingsFor, renderRecordsInto } from "./records.js";
+import { endingForCompletedRoute, endingsFor, renderRecordsInto } from "./records.js";
 import { AutoAdvanceTimer } from "./auto-timer.js";
 import {
   RewindLog,
@@ -536,6 +536,15 @@ private async recordEnding(session: GameSession, endScene: string): Promise<void
 
     for (const id of endingIds) {
       this.tracker?.ending(id);
+    }
+
+    // Some completed endings have no distinctive ending movie, so the graph's
+    // internal Y_ED#... id cannot be mapped through movie aliases. At this
+    // point the session is known to have genuinely ended, making the route's
+    // visited epilogue/bad-end scene safe evidence for its canonical ending.
+    const completedRouteEnding = endingForCompletedRoute(this.catalog, session.route);
+    if (completedRouteEnding) {
+      this.tracker?.ending(completedRouteEnding.id);
     }
 
     // A narrative catalog exists, so do not fall back to internal graph ids.
