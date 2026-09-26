@@ -124,41 +124,43 @@ export function endingForCompletedRoute(
   route: Iterable<string>,
 ): EndingProgressDefinition | null {
   const scenes = [...route].map((scene) => scene.toLowerCase());
-  let standaloneBadEnd: { id: string; name: string } | null = null;
 
   for (let i = scenes.length - 1; i >= 0; i -= 1) {
     const scene = scenes[i]!;
     const label = catalog.scenes[scene];
     if (!label) continue;
 
-    if (label.kind === "epilogue" && label.routeId) {
-      const ending = catalog.endings.find(
-        (e) => e.routeId === label.routeId && e.id.toLowerCase().endsWith("-good"),
-      );
-      if (ending) return ending;
-    }
-
     if (label.kind === "badEnd") {
+      // Viewpoint-only bad-end scenes may be aliases of a canonical shared
+      // ending (Ever17's Takeshi-side Tsugumi/Sora bad end).
+      const byScene = endingById(catalog, scene);
+      if (byScene) return byScene;
+
       if (label.routeId) {
         const ending = catalog.endings.find(
-          (e) => e.routeId === label.routeId && e.id.toLowerCase().endsWith("-bad"),
+          (e) =>
+            e.routeId === label.routeId &&
+            e.id.toLowerCase().endsWith("-bad"),
         );
         if (ending) return ending;
-      } else if (label.shortLabel !== catalog.fallbackLabel) {
-        standaloneBadEnd ??= { id: scene, name: label.shortLabel };
       }
-      continue;
+
+      if (label.shortLabel !== catalog.fallbackLabel) {
+        return { id: scene, name: label.shortLabel };
+      }
     }
 
-    if (standaloneBadEnd && label.routeId) {
+    if (label.kind === "epilogue" && label.routeId) {
       const ending = catalog.endings.find(
-        (e) => e.routeId === label.routeId && e.id.toLowerCase().endsWith("-bad"),
+        (e) =>
+          e.routeId === label.routeId &&
+          e.id.toLowerCase().endsWith("-good"),
       );
       if (ending) return ending;
     }
   }
 
-  return standaloneBadEnd;
+  return null;
 }
 
 /** What the records screen may say about endings. */
@@ -190,7 +192,6 @@ export interface EndingCard {
   collected: Iterable<string>,
   visited: Iterable<string> = [],
   discoveredAssets: Iterable<string> = [],
-  savedRoutes: Iterable<readonly string[]> = [],
 ): EndingsView {
   const collectedIds = [...collected];
 
@@ -223,22 +224,6 @@ export interface EndingCard {
     [...visited].map((scene) => scene.toLowerCase()),
   );
 
-  const refinedStandaloneScenes = new Set<string>();
-  for (const route of savedRoutes) {
-    const scenes = route.map((scene) => scene.toLowerCase());
-    const standaloneScene = [...scenes].reverse().find((scene) => {
-      const label = catalog.scenes[scene];
-      return label?.kind === "badEnd" && !label.routeId;
-    });
-    if (!standaloneScene) continue;
-
-    const ending = endingForCompletedRoute(catalog, scenes);
-    if (!ending || ending.id.toLowerCase() === standaloneScene) continue;
-
-    resolved.add(ending.id);
-    refinedStandaloneScenes.add(standaloneScene);
-  }
-
   const standaloneBadEnds = new Map<string, string>();
 
   for (const scene of visitedScenes) {
@@ -246,10 +231,10 @@ export interface EndingCard {
     if (!label || label.kind !== "badEnd") continue;
 
     if (!label.routeId) {
-      if (
-        label.shortLabel !== catalog.fallbackLabel &&
-        !refinedStandaloneScenes.has(scene)
-      ) {
+      const canonical = endingById(catalog, scene);
+      if (canonical) {
+        resolved.add(canonical.id);
+      } else if (label.shortLabel !== catalog.fallbackLabel) {
         standaloneBadEnds.set(scene, label.shortLabel);
       }
       continue;
@@ -323,7 +308,6 @@ export function renderRecordsInto(
   visited: ReadonlySet<string>,
   collected: ReadonlySet<string>,
   discoveredAssets: ReadonlySet<string>,
-  savedRoutes: readonly (readonly string[])[] = [],
 ): void {
   content.replaceChildren();
   if (!catalog) {
@@ -331,7 +315,7 @@ export function renderRecordsInto(
     return;
   }
   renderChapters(content, catalog, visited);
-  renderEndings(content, catalog, collected, visited, discoveredAssets, savedRoutes);
+  renderEndings(content, catalog, collected, visited, discoveredAssets);
 }
 
 function renderChapters(
@@ -369,10 +353,9 @@ function renderEndings(
   collected: ReadonlySet<string>,
   visited: ReadonlySet<string>,
   discoveredAssets: ReadonlySet<string>,
-  savedRoutes: readonly (readonly string[])[],
 ): void {
   content.appendChild(el("h2", undefined, "结局"));
-  const view = endingsFor(catalog, collected, visited, discoveredAssets, savedRoutes);
+  const view = endingsFor(catalog, collected, visited, discoveredAssets);
   if (view.found.length === 0) {
     content.appendChild(el("p", "empty", "还没有收录任何结局。"));
     return;
