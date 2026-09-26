@@ -5,7 +5,7 @@ import {
   labelForScene,
   type NarrativeProgressCatalog,
 } from "kid-contracts";
-import { endingsFor, groupDiscoveredChapters } from "../src/records.js";
+import { endingForCompletedRoute, endingsFor, groupDiscoveredChapters } from "../src/records.js";
 
 /**
  * The records screen must never show a player something they have not
@@ -240,6 +240,46 @@ it("recovers a bad ending from a visited bad-end scene", () => {
       endingId: "hazel-bad",
     },
   ]);
+});
+
+it("resolves a completed GOOD ending from the current session's epilogue", () => {
+  expect(endingForCompletedRoute(catalog, ["intro", "s1a", "swep", "finale"])).toMatchObject({
+    id: "wren-good",
+    routeId: "wren",
+  });
+});
+
+it("does not treat an ordinary route chapter as a completed ending", () => {
+  expect(endingForCompletedRoute(catalog, ["intro", "n1a", "nh6a"])).toBeNull();
+});
+
+it("resolves a completed BAD ending from the current session route", () => {
+  const withBadEnd: NarrativeProgressCatalog = {
+    ...catalog,
+    scenes: {
+      ...catalog.scenes,
+      nbad: {
+        shortLabel: "Hazel · Bad Ending",
+        kind: "badEnd",
+        viewpointId: "north",
+        viewpoint: "North",
+        routeId: "hazel",
+      },
+    },
+    endings: [
+      ...catalog.endings,
+      {
+        id: "hazel-bad",
+        name: "Hazel · Bad Ending",
+        routeId: "hazel",
+      },
+    ],
+  };
+
+  expect(endingForCompletedRoute(withBadEnd, ["intro", "nh6a", "nbad", "finale"])).toMatchObject({
+    id: "hazel-bad",
+    routeId: "hazel",
+  });
 });
 });
 
