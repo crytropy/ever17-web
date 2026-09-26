@@ -24,6 +24,7 @@
 import {
   labelForScene,
   endingById,
+  type EndingProgressDefinition,
   type NarrativeProgressCatalog,
   type SceneProgressLabel,
 } from "kid-contracts";
@@ -108,6 +109,39 @@ export function groupDiscoveredChapters(
     for (const r of g.routes) r.days.sort((a, b) => a - b);
   }
   return groups;
+}
+
+/**
+ * Resolve one canonical ending from a route that is known to have completed.
+ *
+ * Unlike the records screen's cross-run visited-scene recovery, this is only
+ * called after GameSession has emitted a real ending. That makes an epilogue
+ * safe evidence for a GOOD ending without crediting a player who merely
+ * entered an epilogue and quit before the run finished.
+ */
+export function endingForCompletedRoute(
+  catalog: NarrativeProgressCatalog,
+  route: Iterable<string>,
+): EndingProgressDefinition | null {
+  const scenes = [...route].map((scene) => scene.toLowerCase());
+  for (let i = scenes.length - 1; i >= 0; i -= 1) {
+    const label = catalog.scenes[scenes[i]!];
+    if (!label?.routeId) continue;
+
+    const grade =
+      label.kind === "badEnd" ? "bad" :
+      label.kind === "epilogue" ? "good" :
+      null;
+    if (!grade) continue;
+
+    const ending = catalog.endings.find(
+      (e) =>
+        e.routeId === label.routeId &&
+        e.id.toLowerCase().endsWith(`-${grade}`),
+    );
+    if (ending) return ending;
+  }
+  return null;
 }
 
 /** What the records screen may say about endings. */
