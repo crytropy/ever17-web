@@ -38,6 +38,7 @@ const catalog: NarrativeProgressCatalog = {
     nh6a: { shortLabel: "Hazel · Day 6", kind: "chapter", viewpointId: "north", viewpoint: "North", routeId: "hazel", day: 6 },
     s1a: { shortLabel: "South · Day 1", kind: "chapter", viewpointId: "south", viewpoint: "South", routeId: "common-south", day: 1 },
     swep: { shortLabel: "Wren · Epilogue", kind: "epilogue", viewpointId: "south", viewpoint: "South", routeId: "wren" },
+    nbare: { shortLabel: "North · Bad Ending", kind: "badEnd", viewpointId: "north", viewpoint: "North" },
     // a route only reachable once the game unlocks it
     b3a: { shortLabel: "Lark · Day 3", kind: "chapter", viewpointId: "both", viewpoint: "Both", routeId: "lark", day: 3 },
     system: { shortLabel: "Unknown chapter", kind: "other" },
@@ -279,6 +280,25 @@ it("resolves a completed BAD ending from the current session route", () => {
   expect(endingForCompletedRoute(withBadEnd, ["intro", "nh6a", "nbad", "finale"])).toMatchObject({
     id: "hazel-bad",
     routeId: "hazel",
+  });
+});
+
+it("recovers a standalone bad-end scene that has no route id", () => {
+  const view = endingsFor(catalog, [], ["nbare"], []);
+
+  expect(view.found).toEqual([
+    {
+      name: "North · Bad Ending",
+      collected: true,
+      endingId: "nbare",
+    },
+  ]);
+});
+
+it("records a completed standalone bad end by its scene id", () => {
+  expect(endingForCompletedRoute(catalog, ["intro", "n1a", "nbare", "finale"])).toEqual({
+    id: "nbare",
+    name: "North · Bad Ending",
   });
 });
 });
