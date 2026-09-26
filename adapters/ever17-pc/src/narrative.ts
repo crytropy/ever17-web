@@ -274,6 +274,53 @@ export function buildNarrativeCatalog(scenes: readonly IrScene[], gameId: string
     labels[name] = { ...parent, internalSegment: `${parent.internalSegment ?? ""}${cont[2]!}` };
   }
 
+  const endingRoster = collectEndingRoster(scenes);
+
+  // The source menus label Takeshi's shared failure chapter only by viewpoint
+  // ("武視点・バッド..."), while the player-facing clear list treats it as
+  // one shared Tsugumi/Sora bad ending. The ending roster itself names only
+  // one of those two routes, so normalize that one entry into the shared end
+  // and keep both the old parsed id and the bad-end scene as aliases.
+  const sharedTakeshiBadScene = Object.entries(labels).find(
+    ([, label]) =>
+      label.kind === "badEnd" &&
+      label.viewpointId === "takeshi" &&
+      !label.routeId,
+  )?.[0];
+
+  if (sharedTakeshiBadScene) {
+    const goodTakeshiRoutes = [...routes.values()]
+      .filter((route) => !route.common && route.viewpointId === "takeshi")
+      .filter((route) =>
+        endingRoster.some(
+          (ending) =>
+            ending.routeId === route.id &&
+            ending.id.toLowerCase().endsWith("-good"),
+        ),
+      );
+
+    const badTakeshiEndings = endingRoster.filter(
+      (ending) =>
+        ending.routeId &&
+        goodTakeshiRoutes.some((route) => route.id === ending.routeId) &&
+        ending.id.toLowerCase().endsWith("-bad"),
+    );
+
+    if (goodTakeshiRoutes.length === 2 && badTakeshiEndings.length === 1) {
+      const old = badTakeshiEndings[0]!;
+      const sharedId = `${goodTakeshiRoutes.map((route) => route.id).join("-")}-bad`;
+      const sharedName =
+        `${goodTakeshiRoutes.map((route) => route.name.replace(/篇$/, "")).join("・")}篇 · 另一种结局`;
+      const index = endingRoster.indexOf(old);
+      endingRoster[index] = {
+        id: sharedId,
+        name: sharedName,
+        aliases: [...new Set([...(old.aliases ?? []), old.id, sharedTakeshiBadScene])],
+        order: old.order,
+      };
+    }
+  }
+
   return {
     format: NARRATIVE_CATALOG_FORMAT,
     version: NARRATIVE_CATALOG_VERSION,
@@ -282,7 +329,7 @@ export function buildNarrativeCatalog(scenes: readonly IrScene[], gameId: string
     viewpoints: [...viewpoints.values()].sort((a, b) => a.order - b.order),
     scenes: labels,
     routes: [...routes.values()],
-    endings: collectEndingRoster(scenes),
+    endings: endingRoster,
     derivedFrom: "chapter names in the release's own developer menus (debug*.scr)",
   };
 }
