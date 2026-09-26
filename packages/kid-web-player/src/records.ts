@@ -323,6 +323,7 @@ export function renderRecordsInto(
   visited: ReadonlySet<string>,
   collected: ReadonlySet<string>,
   discoveredAssets: ReadonlySet<string>,
+  savedRoutes: readonly (readonly string[])[] = [],
 ): void {
   content.replaceChildren();
   if (!catalog) {
@@ -330,7 +331,7 @@ export function renderRecordsInto(
     return;
   }
   renderChapters(content, catalog, visited);
-  renderEndings(content, catalog, collected, visited, discoveredAssets);
+  renderEndings(content, catalog, collected, visited, discoveredAssets, savedRoutes);
 }
 
 function renderChapters(
@@ -368,9 +369,10 @@ function renderEndings(
   collected: ReadonlySet<string>,
   visited: ReadonlySet<string>,
   discoveredAssets: ReadonlySet<string>,
+  savedRoutes: readonly (readonly string[])[],
 ): void {
   content.appendChild(el("h2", undefined, "结局"));
-  const view = endingsFor(catalog, collected, visited, discoveredAssets);
+  const view = endingsFor(catalog, collected, visited, discoveredAssets, savedRoutes);
   if (view.found.length === 0) {
     content.appendChild(el("p", "empty", "还没有收录任何结局。"));
     return;
