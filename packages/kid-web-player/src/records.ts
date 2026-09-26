@@ -190,6 +190,7 @@ export interface EndingCard {
   collected: Iterable<string>,
   visited: Iterable<string> = [],
   discoveredAssets: Iterable<string> = [],
+  savedRoutes: Iterable<readonly string[]> = [],
 ): EndingsView {
   const collectedIds = [...collected];
 
@@ -222,6 +223,22 @@ export interface EndingCard {
     [...visited].map((scene) => scene.toLowerCase()),
   );
 
+  const refinedStandaloneScenes = new Set<string>();
+  for (const route of savedRoutes) {
+    const scenes = route.map((scene) => scene.toLowerCase());
+    const standaloneScene = [...scenes].reverse().find((scene) => {
+      const label = catalog.scenes[scene];
+      return label?.kind === "badEnd" && !label.routeId;
+    });
+    if (!standaloneScene) continue;
+
+    const ending = endingForCompletedRoute(catalog, scenes);
+    if (!ending || ending.id.toLowerCase() === standaloneScene) continue;
+
+    resolved.add(ending.id);
+    refinedStandaloneScenes.add(standaloneScene);
+  }
+
   const standaloneBadEnds = new Map<string, string>();
 
   for (const scene of visitedScenes) {
@@ -229,7 +246,10 @@ export interface EndingCard {
     if (!label || label.kind !== "badEnd") continue;
 
     if (!label.routeId) {
-      if (label.shortLabel !== catalog.fallbackLabel) {
+      if (
+        label.shortLabel !== catalog.fallbackLabel &&
+        !refinedStandaloneScenes.has(scene)
+      ) {
         standaloneBadEnds.set(scene, label.shortLabel);
       }
       continue;
