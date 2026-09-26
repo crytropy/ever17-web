@@ -78,8 +78,18 @@ describe("SceneVm", () => {
       }),
       noAssets,
     );
-    expect(vm.next()).toMatchObject({ type: "dialogue", text: "one" });
-    expect(vm.next()).toMatchObject({ type: "dialogue", text: "two" });
+    expect(vm.next()).toMatchObject({
+      type: "dialogue",
+      text: "one",
+      textIndex: 0,
+      segment: 0,
+    });
+    expect(vm.next()).toMatchObject({
+      type: "dialogue",
+      text: "two",
+      textIndex: 0,
+      segment: 0,
+    });
     expect(vm.next()).toMatchObject({ type: "end", reason: "terminated" });
   });
 
