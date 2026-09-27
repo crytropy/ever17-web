@@ -302,22 +302,29 @@ it("records a completed standalone bad end by its scene id", () => {
   });
 });
 
-it("uses the earlier character route to name a viewpoint-only bad end", () => {
-  const refined = {
+it("resolves a viewpoint-only bad end through a canonical scene alias", () => {
+  const aliased = {
     ...catalog,
-    endings: [...catalog.endings, { id: "hazel-bad", name: "Hazel · Bad Ending", routeId: "hazel" }],
+    endings: [
+      ...catalog.endings,
+      {
+        id: "north-shared-bad",
+        name: "North shared bad ending",
+        aliases: ["nbare"],
+      },
+    ],
   } satisfies NarrativeProgressCatalog;
 
-  expect(endingForCompletedRoute(refined, ["intro", "nh6a", "nbare", "finale"])).toMatchObject({
-    id: "hazel-bad",
+  expect(endingForCompletedRoute(aliased, ["intro", "nh6a", "nbare", "finale"])).toMatchObject({
+    id: "north-shared-bad",
   });
-  expect(
-    endingsFor(refined, [], ["nh6a", "nbare"], [], [["intro", "nh6a", "nbare", "finale"]]).found,
-  ).toEqual([
-    { name: "Hazel · Bad Ending", collected: true, endingId: "hazel-bad" },
-  ]);
-});
-});
+
+  expect(endingsFor(aliased, [], ["nbare"], []).found).toContainEqual({
+    name: "North shared bad ending",
+    collected: true,
+    endingId: "north-shared-bad",
+  });
+});});
 
 describe("labels", () => {
   it("shows no scene id anywhere, even for an unlabelled scene", () => {
