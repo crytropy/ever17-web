@@ -324,7 +324,8 @@ it("resolves a viewpoint-only bad end through a canonical scene alias", () => {
     collected: true,
     endingId: "north-shared-bad",
   });
-});});
+});
+});
 
 describe("labels", () => {
   it("shows no scene id anywhere, even for an unlabelled scene", () => {
