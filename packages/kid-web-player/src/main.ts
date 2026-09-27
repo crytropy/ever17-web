@@ -1449,10 +1449,19 @@ private async recordEnding(session: GameSession, endScene: string): Promise<void
 
   private async playMovie(name: string): Promise<void> {
     const url = `${this.assetsBase}/movies/${name.toLowerCase()}.mp4`;
+
+    // Movies own the full presentation while they are on screen. Do not let
+    // the preceding dialogue's BGM/voice/looping SE or textbox bleed into the
+    // movie's own soundtrack and picture.
+    this.audio.stopAll();
+    textboxEl.classList.add("hidden");
+
     const outcome = await this.movies.play(url, { skipAfterMs: this.skip ? 400 : null });
     if (outcome !== "missing") return;
-    // No movie file in this package: say so in the textbox and let the player
-    // move on, exactly as a line would.
+
+    // No movie file in this package: restore the textbox, say so, and let the
+    // player move on exactly as a line would.
+    textboxEl.classList.remove("hidden");
     speakerEl.textContent = "";
     textEl.classList.remove("read");
     textEl.textContent = `[MOVIE: ${name}]`;
@@ -1561,6 +1570,7 @@ private async recordEnding(session: GameSession, endScene: string): Promise<void
           );
           if (this.session !== session) continue; // a load replaced the session
           const wasRead = readState === true;
+          textboxEl.classList.remove("hidden");
           textEl.classList.toggle("read", wasRead);
           speakerEl.textContent = ev.speaker ?? "";
           textEl.textContent = ev.text;
@@ -1591,6 +1601,7 @@ private async recordEnding(session: GameSession, endScene: string): Promise<void
         }
         // sessionEnd
         this.audio.stopAll();
+        textboxEl.classList.remove("hidden");
         speakerEl.textContent = "";
         textEl.classList.remove("read");
         textEl.textContent =
