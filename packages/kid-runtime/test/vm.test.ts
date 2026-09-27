@@ -61,8 +61,10 @@ describe("condition evaluation (VAR_JUMP relations)", () => {
     ] as const;
 
     for (const { varId, threshold, below, passing } of cases) {
-      expect(evaluateCondition(compare(varId, 0x10, threshold), new Map([[varId, below]])).value).toBe(true);
-      expect(evaluateCondition(compare(varId, 0x10, threshold), new Map([[varId, passing]])).value).toBe(false);
+      const belowThreshold = new Map<number, number>([[varId, below]]);
+      const meetsThreshold = new Map<number, number>([[varId, passing]]);
+      expect(evaluateCondition(compare(varId, 0x10, threshold), belowThreshold).value).toBe(true);
+      expect(evaluateCondition(compare(varId, 0x10, threshold), meetsThreshold).value).toBe(false);
     }
   });
 
