@@ -527,12 +527,60 @@ export class PixiStage {
    * things a browser check cannot otherwise see, and they are the two that
    * used to survive a session they did not belong to.
    */
-  probe(): { sprites: number; spriteLayerChildren: number; transients: number; camera: { scale: number; pivotX: number; pivotY: number } } {
+  probe(): {
+    sprites: number;
+    spriteLayerChildren: number;
+    transients: number;
+    camera: { scale: number; pivotX: number; pivotY: number };
+    spriteLayer: { visible: boolean; alpha: number };
+    slots: Array<{
+      slot: number;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      alpha: number;
+      visible: boolean;
+      renderable: boolean;
+      zIndex: number;
+    }>;
+    cg: { visible: boolean; alpha: number; x: number; y: number; width: number; height: number };
+    fill: { alpha: number };
+    backgrounds: {
+      a: { visible: boolean; alpha: number };
+      b: { visible: boolean; alpha: number };
+    };
+  } {
     return {
       sprites: this.slots.size,
       spriteLayerChildren: this.spriteLayer.children.length,
       transients: this.transients.size,
       camera: { scale: this.world.scale.x, pivotX: this.world.pivot.x, pivotY: this.world.pivot.y },
+      spriteLayer: { visible: this.spriteLayer.visible, alpha: this.spriteLayer.alpha },
+      slots: [...this.slots.entries()].map(([slot, sp]) => ({
+        slot,
+        x: sp.x,
+        y: sp.y,
+        width: sp.width,
+        height: sp.height,
+        alpha: sp.alpha,
+        visible: sp.visible,
+        renderable: sp.renderable,
+        zIndex: sp.zIndex,
+      })),
+      cg: {
+        visible: this.cg.visible,
+        alpha: this.cg.alpha,
+        x: this.cg.x,
+        y: this.cg.y,
+        width: this.cg.width,
+        height: this.cg.height,
+      },
+      fill: { alpha: this.fillRect.alpha },
+      backgrounds: {
+        a: { visible: this.bgA.visible, alpha: this.bgA.alpha },
+        b: { visible: this.bgB.visible, alpha: this.bgB.alpha },
+      },
     };
   }
 
