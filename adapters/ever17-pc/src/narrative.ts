@@ -316,7 +316,7 @@ export function buildNarrativeCatalog(scenes: readonly IrScene[], gameId: string
         id: sharedId,
         name: sharedName,
         aliases: [...new Set([...(old.aliases ?? []), old.id, sharedTakeshiBadScene])],
-        order: old.order,
+        ...(old.order !== undefined ? { order: old.order } : {}),
       };
     }
   }
