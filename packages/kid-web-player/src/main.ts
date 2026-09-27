@@ -487,14 +487,12 @@ class WebPlayer {
     this.autoTimer.cancel();
     // The tracker's in-memory view is already current; the flush is only for
     // durability, so the screen does not need to wait for it.
-    const recentRoute = this.slots.get(AUTO_SLOT)?.route ?? [];
     renderRecordsInto(
       recordsContentEl,
       this.catalog,
       new Set(this.tracker?.scenes ?? []),
       new Set(this.tracker?.endings ?? []),
       new Set(this.tracker?.assets ?? []),
-      recentRoute.length > 0 ? [recentRoute] : [],
     );
     recordsEl.classList.remove("hidden");
     void this.tracker?.flush().catch(() => {
