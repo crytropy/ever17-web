@@ -42,14 +42,30 @@ describe("condition evaluation (VAR_JUMP relations)", () => {
     expect(evaluateCondition(compare(1203, 0x0d, 0), vars).value).toBe(true);
   });
 
-  it("evaluates the provisional route-gate relations >= (0x10), > (0x11), <= (0x0f)", () => {
+  it("evaluates the corrected route-gate relation < (0x10), plus > (0x11) and provisional <= (0x0f)", () => {
     const vars = new Map([[1207, 17]]);
-    expect(evaluateCondition(compare(1207, 0x10, 17), vars).value).toBe(true);
-    expect(evaluateCondition(compare(1207, 0x10, 18), vars).value).toBe(false);
+    expect(evaluateCondition(compare(1207, 0x10, 17), vars).value).toBe(false);
+    expect(evaluateCondition(compare(1207, 0x10, 18), vars).value).toBe(true);
     // 0x11 is strictly-greater: t_6b's ask-menu exits on 1211 > 1
     expect(evaluateCondition(compare(1207, 0x11, 16), vars).value).toBe(true);
     expect(evaluateCondition(compare(1207, 0x11, 17), vars).value).toBe(false);
     expect(evaluateCondition(compare(1207, 0x0f, 17), vars).value).toBe(true);
+  });
+
+  it("keeps known Ever17 route thresholds as low-affection failure gates", () => {
+    const cases = [
+      { varId: 1207, threshold: 17, below: 5, passing: 17 }, // Tsugumi
+      { varId: 1208, threshold: 14, below: 13, passing: 19 }, // Sora
+      { varId: 1206, threshold: 7, below: 6, passing: 8 }, // You
+      { varId: 1209, threshold: 3, below: 2, passing: 3 }, // later y_ed gate
+    ] as const;
+
+    for (const { varId, threshold, below, passing } of cases) {
+      const belowThreshold = new Map<number, number>([[varId, below]]);
+      const meetsThreshold = new Map<number, number>([[varId, passing]]);
+      expect(evaluateCondition(compare(varId, 0x10, threshold), belowThreshold).value).toBe(true);
+      expect(evaluateCondition(compare(varId, 0x10, threshold), meetsThreshold).value).toBe(false);
+    }
   });
 
   it("defaults unwritten variables to 0", () => {
