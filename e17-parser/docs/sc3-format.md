@@ -273,8 +273,8 @@ forced the correction; the two sites phase 2 cited are re-explained below.
   the quake test writes its six parameters (vars 571-576) before EFFECT_ON(12).
 * mod `0x17` — modify, observed only on vars 1206-1215 (the affection block),
   e.g. `1206 <0x17> 1` on s_1a's 谢谢 branch. Read as `+=` (Medium): choice
-  rewards accumulate and are later compared against thresholds like
-  `1207 >= 17`.
+  rewards accumulate and are later compared against failure thresholds like
+  `1207 < 17` (jump while affection is still too low).
 * `fe 2d`/`fe 2e` (mods 0x18/0x1b/0x20) never occur in story scripts; their
   modifications are unidentified (Low).
 
@@ -286,7 +286,7 @@ comparison holds:
 |---|---|---|---|
 | `0x0c` | `==` | High | s_1a2 head: `if 1203==1 -> entry#6`, `==2 -> entry#9` (resume points after the SC1A insert); fresh entries (1203=0) fall through both |
 | `0x0d` | `!=` | High | t_1c's investigation gate loops back to the menu while `1232 != 0` or `1233 != 0` (unvisited locations) |
-| `0x10` | `>=` | Low-Med | route gates: t_6b `1207 >= 17` / `1208 >= 14`, sy6b `1206 >= 7`, y_ed `1209 >= 3` |
+| `0x10` | `<` | Medium | low-affection failure gates: t_6b `1207 < 17` / `1208 < 14`, sy6b `1206 < 7`, y_ed `1209 < 3`; corrected after playtest showed an above-threshold Sora score incorrectly entering t_bd under the old polarity |
 | `0x11` | `>` | Low-Med | t_6b's ask-menu counts asks in 1211 and exits on `1211 > 1` (ask two of three); under `<` the gate is dead code and the menu cannot terminate |
 | `0x0f` | `<=`? | Low | 2 sites; orientation unverified |
 
