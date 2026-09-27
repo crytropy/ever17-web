@@ -43,6 +43,7 @@ import { LoadingIndicator } from "./loading-indicator.js";
 import { computeAutoAdvanceDelay } from "./auto-timing.js";
 import { endingForCompletedRoute, endingsFor, renderRecordsInto } from "./records.js";
 import { AutoAdvanceTimer } from "./auto-timer.js";
+import { shouldStopSkipAtLine } from "./skip-policy.js";
 import {
   RewindLog,
   backlogOrdinal,
@@ -1540,6 +1541,19 @@ private async recordEnding(session: GameSession, endScene: string): Promise<void
             ev.state.bgm,
             ev.state.bgm ? `${this.assetsBase}/${this.assets.relative(ev.state.bgm) ?? ""}` : null,
           );
+          const lineId =
+            ev.textIndex !== undefined && ev.segment !== undefined
+              ? dialogueLineId(session.scene, ev.state.block, ev.textIndex, ev.segment)
+              : null;
+          const readState = lineId ? (this.tracker?.hasLine(lineId) ?? false) : null;
+
+          // SKIP means "skip read text", not "skip everything". Stop before
+          // applying an unread line so its transition, voice and wait all run
+          // at normal speed. Unknown legacy/custom lines stop too.
+          if (shouldStopSkipAtLine(this.skip, readState)) {
+            this.setSkip(false);
+          }
+
           // play the transition script, then show the line
           await this.waits.time("stage.apply", { scene: session.scene, block: ev.state.block }, () =>
             this.stage?.apply(ev.state, ev.actions, (f) => `${this.assetsBase}/${f}`, {
@@ -1548,11 +1562,7 @@ private async recordEnding(session: GameSession, endScene: string): Promise<void
             }) ?? Promise.resolve(),
           );
           if (this.session !== session) continue; // a load replaced the session
-          const lineId =
-            ev.textIndex !== undefined && ev.segment !== undefined
-              ? dialogueLineId(session.scene, ev.state.block, ev.textIndex, ev.segment)
-              : null;
-          const wasRead = lineId ? (this.tracker?.hasLine(lineId) ?? false) : false;
+          const wasRead = readState === true;
           textEl.classList.toggle("read", wasRead);
           speakerEl.textContent = ev.speaker ?? "";
           textEl.textContent = ev.text;
