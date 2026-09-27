@@ -261,3 +261,45 @@ describe("records module is safe for the game bundle to import", () => {
     expect(readFileSync(join(src, "records-page.ts"), "utf8")).toMatch(/^\s*void main\(\)/m);
   });
 });
+
+
+describe("movie presentation handoff", () => {
+  it("stops story audio and hides the textbox before starting a movie", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const { join, dirname } = await import("node:path");
+    const main = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "..", "src", "main.ts"),
+      "utf8",
+    );
+    const start = main.indexOf("private async playMovie");
+    const end = main.indexOf("/** Resolver of the currently displayed choice", start);
+    const body = main.slice(start, end);
+
+    expect(body).toMatch(
+      /this\.audio\.stopAll\(\);[\s\S]*textboxEl\.classList\.add\("hidden"\);[\s\S]*this\.movies\.play\(/,
+    );
+    expect(body).toMatch(
+      /if \(outcome !== "missing"\) return;[\s\S]*textboxEl\.classList\.remove\("hidden"\);/,
+    );
+  });
+
+  it("restores the textbox for the next dialogue and for session end", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const { join, dirname } = await import("node:path");
+    const main = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "..", "src", "main.ts"),
+      "utf8",
+    );
+
+    const dialogueStart = main.indexOf('if (ev.type === "dialogue")');
+    const choiceStart = main.indexOf('if (ev.type === "choice")', dialogueStart);
+    const dialogue = main.slice(dialogueStart, choiceStart);
+    expect(dialogue).toContain('textboxEl.classList.remove("hidden");');
+
+    const endStart = main.indexOf("// sessionEnd", choiceStart);
+    const endBody = main.slice(endStart, main.indexOf("return;", endStart));
+    expect(endBody).toContain('textboxEl.classList.remove("hidden");');
+  });
+});
