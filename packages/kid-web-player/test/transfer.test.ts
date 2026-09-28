@@ -56,9 +56,14 @@ function fakeSave(scene: string, lines: number, vars: [number, number][] = []): 
   };
 }
 
-const completion = (scenes: string[], endings: string[] = []): CompletionState => ({
+const completion = (
+  scenes: string[],
+  endings: string[] = [],
+  lines: string[] = [],
+): CompletionState => ({
   version: 1,
   visitedScenes: scenes,
+  ...(lines.length > 0 ? { visitedLines: lines } : {}),
   visitedChoices: [],
   endings,
   discoveredAssets: [],
@@ -120,7 +125,10 @@ describe("import", () => {
     new SaveSlots(source, NS).put("1", fakeSave("t_1a", 100));
     saveConfig(source, NS, { ...DEFAULT_CONFIG, autoSpeed: "slow", bgmVolume: 0.25 });
     new PersistentProgress(source, NS, GAME, POLICY).record([[1039, 1], [1050, 1]]);
-    const doc = buildPlayerDataExport(ctx(source), completion(["op00"], ["END_TU00"]));
+    const doc = buildPlayerDataExport(
+      ctx(source),
+      completion(["op00"], ["END_TU00"], ["op00:00000010:3:0"]),
+    );
 
     const target = mockStorage();
     const outcome = applyPlayerDataImport(ctx(target), doc);
@@ -129,6 +137,7 @@ describe("import", () => {
     expect(loadConfig(target, NS).autoSpeed).toBe("slow");
     expect(new PersistentProgress(target, NS, GAME, POLICY).seed()).toEqual([[1039, 1], [1050, 1]]);
     expect(outcome.completion?.endings).toEqual(["END_TU00"]);
+    expect(outcome.completion?.visitedLines).toEqual(["op00:00000010:3:0"]);
   });
 
   it("keeps slots the file does not mention", () => {
@@ -173,8 +182,12 @@ describe("import", () => {
 
 describe("completion merging", () => {
   it("is a union - discovering something is never undone", () => {
-    const merged = mergeCompletion(completion(["op00", "t_1a"], ["END_TU00"]), completion(["t_1a", "sy4a"], ["END_SA00"]));
+    const merged = mergeCompletion(
+      completion(["op00", "t_1a"], ["END_TU00"], ["op00:a:1:0"]),
+      completion(["t_1a", "sy4a"], ["END_SA00"], ["sy4a:b:2:0", "op00:a:1:0"]),
+    );
     expect(merged.visitedScenes).toEqual(["op00", "sy4a", "t_1a"]);
+    expect(merged.visitedLines).toEqual(["op00:a:1:0", "sy4a:b:2:0"]);
     expect(merged.endings).toEqual(["END_SA00", "END_TU00"]);
   });
 
@@ -210,6 +223,18 @@ describe("deep validation of an imported file", () => {
 
   it("accepts a well-formed document", () => {
     expect(validatePlayerData(good(), GAME)).toBeNull();
+  });
+
+  it("accepts optional read-line data and validates it when present", () => {
+    const doc = good();
+    (doc.completion as Record<string, unknown>).visitedLines = ["op00:00000010:3:0"];
+    expect(validatePlayerData(doc, GAME)).toBeNull();
+
+    (doc.completion as Record<string, unknown>).visitedLines = "bad";
+    expect(validatePlayerData(doc, GAME)).toMatch(/visitedLines is malformed/);
+
+    (doc.completion as Record<string, unknown>).visitedLines = [{}];
+    expect(validatePlayerData(doc, GAME)).toMatch(/visitedLines contains something that is not a name/);
   });
 
   const damaged: [string, (d: ReturnType<typeof good>) => void, RegExp][] = [

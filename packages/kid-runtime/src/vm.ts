@@ -268,6 +268,8 @@ export class SceneVm {
             type: "dialogue",
             speaker: op.speaker,
             text: op.text,
+            textIndex: op.textIndex,
+            segment: op.segment,
             voice: op.voice,
             voiceFile: this.assets.relative(op.voice),
             state: this.snapshot(),

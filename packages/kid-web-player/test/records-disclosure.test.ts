@@ -5,7 +5,7 @@ import {
   labelForScene,
   type NarrativeProgressCatalog,
 } from "kid-contracts";
-import { endingsFor, groupDiscoveredChapters } from "../src/records.js";
+import { endingForCompletedRoute, endingsFor, groupDiscoveredChapters } from "../src/records.js";
 
 /**
  * The records screen must never show a player something they have not
@@ -38,6 +38,7 @@ const catalog: NarrativeProgressCatalog = {
     nh6a: { shortLabel: "Hazel · Day 6", kind: "chapter", viewpointId: "north", viewpoint: "North", routeId: "hazel", day: 6 },
     s1a: { shortLabel: "South · Day 1", kind: "chapter", viewpointId: "south", viewpoint: "South", routeId: "common-south", day: 1 },
     swep: { shortLabel: "Wren · Epilogue", kind: "epilogue", viewpointId: "south", viewpoint: "South", routeId: "wren" },
+    nbare: { shortLabel: "North · Bad Ending", kind: "badEnd", viewpointId: "north", viewpoint: "North" },
     // a route only reachable once the game unlocks it
     b3a: { shortLabel: "Lark · Day 3", kind: "chapter", viewpointId: "both", viewpoint: "Both", routeId: "lark", day: 3 },
     system: { shortLabel: "Unknown chapter", kind: "other" },
@@ -240,6 +241,89 @@ it("recovers a bad ending from a visited bad-end scene", () => {
       endingId: "hazel-bad",
     },
   ]);
+});
+
+it("resolves a completed GOOD ending from the current session's epilogue", () => {
+  expect(endingForCompletedRoute(catalog, ["intro", "s1a", "swep", "finale"])).toMatchObject({
+    id: "wren-good",
+    routeId: "wren",
+  });
+});
+
+it("does not treat an ordinary route chapter as a completed ending", () => {
+  expect(endingForCompletedRoute(catalog, ["intro", "n1a", "nh6a"])).toBeNull();
+});
+
+it("resolves a completed BAD ending from the current session route", () => {
+  const withBadEnd: NarrativeProgressCatalog = {
+    ...catalog,
+    scenes: {
+      ...catalog.scenes,
+      nbad: {
+        shortLabel: "Hazel · Bad Ending",
+        kind: "badEnd",
+        viewpointId: "north",
+        viewpoint: "North",
+        routeId: "hazel",
+      },
+    },
+    endings: [
+      ...catalog.endings,
+      {
+        id: "hazel-bad",
+        name: "Hazel · Bad Ending",
+        routeId: "hazel",
+      },
+    ],
+  };
+
+  expect(endingForCompletedRoute(withBadEnd, ["intro", "nh6a", "nbad", "finale"])).toMatchObject({
+    id: "hazel-bad",
+    routeId: "hazel",
+  });
+});
+
+it("recovers a standalone bad-end scene that has no route id", () => {
+  const view = endingsFor(catalog, [], ["nbare"], []);
+
+  expect(view.found).toEqual([
+    {
+      name: "North · Bad Ending",
+      collected: true,
+      endingId: "nbare",
+    },
+  ]);
+});
+
+it("records a completed standalone bad end by its scene id", () => {
+  expect(endingForCompletedRoute(catalog, ["intro", "n1a", "nbare", "finale"])).toEqual({
+    id: "nbare",
+    name: "North · Bad Ending",
+  });
+});
+
+it("resolves a viewpoint-only bad end through a canonical scene alias", () => {
+  const aliased = {
+    ...catalog,
+    endings: [
+      ...catalog.endings,
+      {
+        id: "north-shared-bad",
+        name: "North shared bad ending",
+        aliases: ["nbare"],
+      },
+    ],
+  } satisfies NarrativeProgressCatalog;
+
+  expect(endingForCompletedRoute(aliased, ["intro", "nh6a", "nbare", "finale"])).toMatchObject({
+    id: "north-shared-bad",
+  });
+
+  expect(endingsFor(aliased, [], ["nbare"], []).found).toContainEqual({
+    name: "North shared bad ending",
+    collected: true,
+    endingId: "north-shared-bad",
+  });
 });
 });
 

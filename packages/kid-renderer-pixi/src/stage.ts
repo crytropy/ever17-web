@@ -165,7 +165,11 @@ export class PixiStage {
         .filter(([, v]) => v.type === "tint" && v.pulse)
         .map(([id]) => Number(id)),
     );
-    this.world.addChild(this.bgA, this.bgB, this.spriteLayer);
+    // Backgrounds are camera-framed together. Character art uses a separate
+    // container with the same camera transform so full-screen fill/CG planes
+    // can sit between backgrounds and characters. This matters in Ever17's
+    // finale, where sprites are intentionally shown over a full-screen CG.
+    this.world.addChild(this.bgA, this.bgB);
     this.picture = new Picture({
       surface: this.surface(),
       anim: this.anim,
@@ -173,8 +177,10 @@ export class PixiStage {
       cancelled: () => this.loader.stale(this.applyEpochAtStart),
     });
     this.fx.addChild(this.tintRect, this.beamRect, this.fogRect, this.snow, this.flashRect);
-    // cg overlays sit above the fill: op00 letterboxes its CGs over white
-    this.shaker.addChild(this.world, this.fillRect, this.cg, this.fx);
+    // Layer order: backgrounds < fill < CG < character sprites < effects.
+    // CG stays above fill (op00 letterboxes CGs over white), while character
+    // art remains visible when the script composes it over a CG.
+    this.shaker.addChild(this.world, this.fillRect, this.cg, this.spriteLayer, this.fx);
     app.stage.addChild(this.shaker);
     this.spriteLayer.sortableChildren = true;
     this.cg.visible = false;
@@ -260,6 +266,8 @@ export class PixiStage {
     this.shaker.x = this.shaker.y = 0;
     this.world.scale.set(1);
     this.world.pivot.set(0, 0);
+    this.spriteLayer.scale.set(1);
+    this.spriteLayer.pivot.set(0, 0);
     this.rand = lcg(0x1d117);
   }
 
@@ -511,6 +519,10 @@ export class PixiStage {
     const t = this.transformFor(rect);
     this.world.scale.set(t.scale);
     this.world.pivot.set(t.pivotX, t.pivotY);
+    // Sprites are a sibling of the background container so fill/CG can sit
+    // behind them; mirror the authored camera framing onto both containers.
+    this.spriteLayer.scale.set(t.scale);
+    this.spriteLayer.pivot.set(t.pivotX, t.pivotY);
   }
   /**
    * Display objects owned by an operation rather than by the picture - a pose
@@ -527,12 +539,60 @@ export class PixiStage {
    * things a browser check cannot otherwise see, and they are the two that
    * used to survive a session they did not belong to.
    */
-  probe(): { sprites: number; spriteLayerChildren: number; transients: number; camera: { scale: number; pivotX: number; pivotY: number } } {
+  probe(): {
+    sprites: number;
+    spriteLayerChildren: number;
+    transients: number;
+    camera: { scale: number; pivotX: number; pivotY: number };
+    spriteLayer: { visible: boolean; alpha: number };
+    slots: Array<{
+      slot: number;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      alpha: number;
+      visible: boolean;
+      renderable: boolean;
+      zIndex: number;
+    }>;
+    cg: { visible: boolean; alpha: number; x: number; y: number; width: number; height: number };
+    fill: { alpha: number };
+    backgrounds: {
+      a: { visible: boolean; alpha: number };
+      b: { visible: boolean; alpha: number };
+    };
+  } {
     return {
       sprites: this.slots.size,
       spriteLayerChildren: this.spriteLayer.children.length,
       transients: this.transients.size,
       camera: { scale: this.world.scale.x, pivotX: this.world.pivot.x, pivotY: this.world.pivot.y },
+      spriteLayer: { visible: this.spriteLayer.visible, alpha: this.spriteLayer.alpha },
+      slots: [...this.slots.entries()].map(([slot, sp]) => ({
+        slot,
+        x: sp.x,
+        y: sp.y,
+        width: sp.width,
+        height: sp.height,
+        alpha: sp.alpha,
+        visible: sp.visible,
+        renderable: sp.renderable,
+        zIndex: sp.zIndex,
+      })),
+      cg: {
+        visible: this.cg.visible,
+        alpha: this.cg.alpha,
+        x: this.cg.x,
+        y: this.cg.y,
+        width: this.cg.width,
+        height: this.cg.height,
+      },
+      fill: { alpha: this.fillRect.alpha },
+      backgrounds: {
+        a: { visible: this.bgA.visible, alpha: this.bgA.alpha },
+        b: { visible: this.bgB.visible, alpha: this.bgB.alpha },
+      },
     };
   }
 
@@ -598,6 +658,8 @@ export class PixiStage {
       setCamera: (scale, pivotX, pivotY) => {
         stage.world.scale.set(scale);
         stage.world.pivot.set(pivotX, pivotY);
+        stage.spriteLayer.scale.set(scale);
+        stage.spriteLayer.pivot.set(pivotX, pivotY);
       },
     };
   }

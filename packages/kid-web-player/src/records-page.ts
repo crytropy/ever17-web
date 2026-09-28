@@ -11,7 +11,7 @@ import { labelForScene, type GamePackageMeta, type NarrativeProgressCatalog } fr
 import { CompletionTracker, IdbCompletionStore } from "./completion.js";
 import { readActiveScope } from "./play-data.js";
 import { renderRecordsInto } from "./records.js";
-import { SaveSlots } from "./slots.js";
+import { AUTO_SLOT, SaveSlots } from "./slots.js";
 
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
 
@@ -33,10 +33,13 @@ async function main(): Promise<void> {
 const visited = new Set(tracker?.scenes ?? []);
 const collected = new Set(tracker?.endings ?? []);
 const discoveredAssets = new Set(tracker?.assets ?? []);
+let savedRoutes: readonly (readonly string[])[] = [];
 
   // "last played" comes from the newest save, so it survives a reload
   try {
     const slots = new SaveSlots(localStorage, scope.storagePrefix);
+    const autoRoute = slots.get(AUTO_SLOT)?.route ?? [];
+    savedRoutes = autoRoute.length > 0 ? [autoRoute] : [];
     const list = slots.list();
     const latest = list.length > 0 ? list.reduce((a, b) => (b.savedAt > a.savedAt ? b : a)) : null;
     if (latest && catalog) {
@@ -52,6 +55,7 @@ const discoveredAssets = new Set(tracker?.assets ?? []);
   visited,
   collected,
   discoveredAssets,
+  savedRoutes,
 );
 }
 
